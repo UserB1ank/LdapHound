@@ -13,9 +13,13 @@ pub enum Message {
     FileSelected(Option<PathBuf>),
     ParseCompleted(Result<Snapshot, String>),
 
-    /// User clicked the expand/collapse chevron of a tree node identified
-    /// by its DN (lowercased). Toggle its expand state.
+    /// Toggle expand/collapse of a tree node identified by its DN.
     ToggleNode(String),
-    /// User selected a tree node to view its details on the right pane.
+    /// Select a tree node to view its details.
     SelectNode(usize),
+
+    /// Select an ACE row in the ACL grid (by index within the DACL).
+    SelectAce(usize),
+    /// Copy the given text to the system clipboard.
+    CopyToClipboard(String),
 }

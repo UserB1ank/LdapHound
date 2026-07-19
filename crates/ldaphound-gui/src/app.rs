@@ -26,6 +26,9 @@ pub struct App {
     expanded: HashSet<String>,
     /// Selected object index, shown in the right pane.
     selected: Option<usize>,
+    /// Selected ACE index within the current object's DACL (for highlight +
+    /// clipboard copy). Reset whenever the selected object changes.
+    selected_ace: Option<usize>,
 
     status: String,
     parsing: bool,
@@ -37,6 +40,7 @@ pub fn new() -> App {
         tree: None,
         expanded: HashSet::new(),
         selected: None,
+        selected_ace: None,
         status: "Open a .dat snapshot to begin.".into(),
         parsing: false,
     }
@@ -99,6 +103,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.tree = Some(tree);
                     app.expanded = expanded;
                     app.selected = None;
+                    app.selected_ace = None;
                     app.snapshot = Some(snap);
                 }
                 Err(e) => app.status = format!("Parse failed: {e}"),
@@ -115,7 +120,22 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::SelectNode(i) => {
             app.selected = Some(i);
+            // Reset ACE selection when switching objects — index is per-object.
+            app.selected_ace = None;
             Task::none()
+        }
+        Message::SelectAce(i) => {
+            // Toggle: clicking the same ACE again deselects it.
+            app.selected_ace = if app.selected_ace == Some(i) {
+                None
+            } else {
+                Some(i)
+            };
+            Task::none()
+        }
+        Message::CopyToClipboard(s) => {
+            app.status = format!("Copied {s:?} to clipboard");
+            iced::clipboard::write(s)
         }
     }
 }
@@ -137,7 +157,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         (Some(snap), Some(tree)) => {
             let left = sidebar::view(snap, tree, &app.expanded, app.selected);
             let right = match app.selected.and_then(|i| snap.objects.get(i)) {
-                Some(o) => object_view::view(o, snap),
+                Some(o) => object_view::view(o, snap, app.selected_ace),
                 None => container(text("Select an object in the tree."))
                     .center(Length::Fill)
                     .into(),

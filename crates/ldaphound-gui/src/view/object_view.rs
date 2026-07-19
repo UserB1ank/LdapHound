@@ -2,21 +2,33 @@
 //!
 //! Vertical stack inside one scrollable:
 //! 1. Header (display name, objectClass, DN, SID)
-//! 2. Attributes table (name | value), sorted alphabetically
-//! 3. ACL breakdown (owner/group/flags + every ACE in the DACL, trustees
-//!    resolved against the snapshot's object index)
+//! 2. Attributes list (name | value), sorted alphabetically
+//! 3. ACL breakdown: owner/group/flags, then a column-aligned ACE grid with
+//!    selectable rows. Selecting a row highlights it and exposes a copy
+//!    action that writes the whole row (tab-separated) to the clipboard.
 
-use iced::widget::{column, container, row, scrollable, text};
-use iced::{Element, Length};
+use iced::widget::{button, column, container, row, scrollable, text};
+use iced::{Element, FillPortion, Length};
 
 use ldaphound_core::security::descriptor::SecurityDescriptor;
 use ldaphound_core::{Object, Snapshot};
 
 use crate::message::Message;
 
-pub fn view<'a>(obj: &'a Object, snap: &'a Snapshot) -> Element<'a, Message> {
-    // Collect owned strings up front so widgets don't borrow locals that
-    // would be dropped at the end of this function.
+// Fixed column widths (in portion units) for the ACE grid. Header and every
+// row must use the same proportions so the columns line up visually.
+const COL_IDX: u16 = 1;
+const COL_KIND: u16 = 4;
+const COL_RIGHT: u16 = 14;
+const COL_MASK: u16 = 10;
+const COL_INHERITED: u16 = 5;
+const COL_TRUSTEE: u16 = 22;
+
+pub fn view<'a>(
+    obj: &'a Object,
+    snap: &'a Snapshot,
+    selected_ace: Option<usize>,
+) -> Element<'a, Message> {
     let title = format!(
         "{} ({})",
         obj.display_name(),
@@ -28,6 +40,7 @@ pub fn view<'a>(obj: &'a Object, snap: &'a Snapshot) -> Element<'a, Message> {
         .map(|s| format!("sid: {s}"))
         .unwrap_or_default();
 
+    // Pre-extract attribute display rows.
     let mut attrs: Vec<(&String, String)> = obj
         .attributes
         .iter()
@@ -40,7 +53,6 @@ pub fn view<'a>(obj: &'a Object, snap: &'a Snapshot) -> Element<'a, Message> {
         None => AclView::Absent,
     };
 
-    // Build widgets.
     let mut children: Vec<Element<'a, Message>> = Vec::new();
     children.push(text(title).size(16).into());
     children.push(text(dn_line).into());
@@ -48,13 +60,17 @@ pub fn view<'a>(obj: &'a Object, snap: &'a Snapshot) -> Element<'a, Message> {
         children.push(text(sid_line).into());
     }
 
-    // Attribute section.
-    children.push(text(format!("Attributes ({})", attrs.len())).size(13).into());
+    // Attributes section.
+    children.push(
+        text(format!("Attributes ({})", attrs.len()))
+            .size(13)
+            .into(),
+    );
     for (name, joined) in attrs {
         children.push(
             row![
-                text(format!("{name}:")).width(Length::FillPortion(2)),
-                text(joined).width(Length::FillPortion(5)),
+                text(format!("{name}:")).width(FillPortion(2)),
+                text(joined).width(FillPortion(5)),
             ]
             .spacing(8)
             .into(),
@@ -68,22 +84,63 @@ pub fn view<'a>(obj: &'a Object, snap: &'a Snapshot) -> Element<'a, Message> {
         AclView::Ok {
             header,
             owner,
-            ace_count,
             aces,
         } => {
             children.push(text(header).size(13).into());
             children.push(text(format!("owner: {owner}")).into());
-            children.push(text(format!("DACL ({ace_count} ACEs):")).into());
-            for ace in aces {
-                children.push(
-                    column![
-                        text(ace.kind_line),
-                        text(format!("    mask   : {}", ace.mask_line)),
-                        text(format!("    trustee: {}", ace.trustee_line)),
+            children.push(text(format!("DACL ({} ACEs):", aces.len())).into());
+
+            // Header row of the grid.
+            children.push(
+                row![
+                    cell_text("#", COL_IDX),
+                    cell_text("Kind", COL_KIND),
+                    cell_text("Right", COL_RIGHT),
+                    cell_text("Mask", COL_MASK),
+                    cell_text("Inherited", COL_INHERITED),
+                    cell_text("Trustee", COL_TRUSTEE),
+                ]
+                .spacing(4)
+                .into(),
+            );
+
+            // Body rows. Each row is a button that selects the ACE; a side
+            // "Copy" button appears only on the currently-selected row.
+            for (i, ace) in aces.iter().enumerate() {
+                let is_sel = selected_ace == Some(i);
+                let prefix = if is_sel { "▶ " } else { "  " };
+                let row_text = format_ace_row(i, ace);
+
+                let row_btn = button(
+                    row![
+                        cell_text(format!("{prefix}{}", i), COL_IDX),
+                        cell_text(&ace.kind, COL_KIND),
+                        cell_text(&ace.right, COL_RIGHT),
+                        cell_text(&ace.mask, COL_MASK),
+                        cell_text(
+                            if ace.inherited { "inherited" } else { "explicit" },
+                            COL_INHERITED
+                        ),
+                        cell_text(&ace.trustee, COL_TRUSTEE),
                     ]
-                    .spacing(2)
-                    .into(),
-                );
+                    .spacing(4),
+                )
+                .on_press(Message::SelectAce(i))
+                .padding(2);
+
+                let row_el: Element<'a, Message> = if is_sel {
+                    row![
+                        row_btn,
+                        button(text("Copy"))
+                            .on_press(Message::CopyToClipboard(row_text))
+                            .padding(2),
+                    ]
+                    .spacing(4)
+                    .into()
+                } else {
+                    row_btn.into()
+                };
+                children.push(row_el);
             }
         }
     }
@@ -96,6 +153,10 @@ pub fn view<'a>(obj: &'a Object, snap: &'a Snapshot) -> Element<'a, Message> {
         .into()
 }
 
+fn cell_text(s: impl ToString, portion: u16) -> Element<'static, Message> {
+    text(s.to_string()).width(Length::FillPortion(portion)).into()
+}
+
 fn format_attr_values(values: &[ldaphound_core::snapshot::AttributeValue]) -> String {
     if values.len() == 1 {
         format!("{}", values[0])
@@ -105,6 +166,18 @@ fn format_attr_values(values: &[ldaphound_core::snapshot::AttributeValue]) -> St
     }
 }
 
+fn format_ace_row(i: usize, ace: &AceLine) -> String {
+    format!(
+        "{}\t{}\t{}\t{}\t{}\t{}",
+        i,
+        ace.kind,
+        ace.right,
+        ace.mask,
+        if ace.inherited { "inherited" } else { "explicit" },
+        ace.trustee,
+    )
+}
+
 // Owned ACL display data, decoupled from the borrowed SD parse result.
 enum AclView {
     Absent,
@@ -112,15 +185,16 @@ enum AclView {
     Ok {
         header: String,
         owner: String,
-        ace_count: usize,
         aces: Vec<AceLine>,
     },
 }
 
 struct AceLine {
-    kind_line: String,
-    mask_line: String,
-    trustee_line: String,
+    kind: String,
+    right: String,
+    mask: String,
+    inherited: bool,
+    trustee: String,
 }
 
 impl AclView {
@@ -142,8 +216,7 @@ impl AclView {
                     .dacl
                     .iter()
                     .flat_map(|d| d.aces.iter())
-                    .enumerate()
-                    .map(|(i, ace)| {
+                    .map(|ace| {
                         use ldaphound_core::security::AceType;
                         let kind = match ace.ace_type() {
                             AceType::AccessAllowed => "Allow",
@@ -151,14 +224,14 @@ impl AclView {
                             AceType::AccessAllowedObject => "AllowObj",
                             AceType::AccessDeniedObject => "DenyObj",
                             _ => "Other",
-                        };
+                        }
+                        .to_string();
                         let right = ace.right_name().unwrap_or_else(|| "-".into());
-                        let inherited =
-                            if ace.is_inherited() { "inherited" } else { "explicit" };
                         let mask = ace
                             .mask()
                             .map(|m| format!("{m} [{}]", m.human_names().join(",")))
                             .unwrap_or_else(|| "-".into());
+                        let inherited = ace.is_inherited();
                         let trustee = match ace.trustee() {
                             Some(sid) => match find_by_sid(snap, sid) {
                                 Some(o) => format!(
@@ -171,16 +244,17 @@ impl AclView {
                             None => "-".into(),
                         };
                         AceLine {
-                            kind_line: format!("▶ ACE[{i}] {kind} {right} [{inherited}]"),
-                            mask_line: mask,
-                            trustee_line: trustee,
+                            kind,
+                            right,
+                            mask,
+                            inherited,
+                            trustee,
                         }
                     })
                     .collect();
                 AclView::Ok {
                     header,
                     owner,
-                    ace_count: aces.len(),
                     aces,
                 }
             }
