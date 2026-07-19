@@ -29,5 +29,8 @@ pub enum Message {
 
     /// User dragged the divider between sidebar and main panes.
     PaneResized(pane_grid::ResizeEvent),
+
+    /// User typed in the sidebar filter box.
+    FilterChanged(String),
 }
 

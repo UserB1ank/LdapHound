@@ -31,7 +31,12 @@ pub fn view<'a>(
     selected_ace: Option<usize>,
     active_tab: usize,
 ) -> Element<'a, Message> {
-    let header = view_header(obj);
+    // Header lives in the pane TitleBar (built by app::main_pane); here we
+    // only render the SID line + tabbed content.
+    let sid_line = obj
+        .object_sid()
+        .map(|s| format!("sid: {s}"))
+        .unwrap_or_default();
 
     let tabs = Tabs::new(Message::TabSelected)
         .push(
@@ -47,34 +52,22 @@ pub fn view<'a>(
         .set_active_tab(&active_tab)
         .height(Length::Fill);
 
-    let col = column![header, tabs].spacing(8);
+    let mut col_children: Vec<Element<'a, Message>> = Vec::new();
+    if !sid_line.is_empty() {
+        col_children.push(
+            text(sid_line)
+                .color(crate::theme::dim_text())
+                .into(),
+        );
+    }
+    col_children.push(tabs.into());
+    let col = column(col_children).spacing(4);
     container(scrollable(col))
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(4)
+        .padding([4, 10])
+        .style(|t| crate::theme::pane_body(t))
         .into()
-}
-
-fn view_header(obj: &Object) -> Element<'_, Message> {
-    let title = format!(
-        "{} ({})",
-        obj.display_name(),
-        obj.object_classes().last().map(|s| s.as_str()).unwrap_or("?"),
-    );
-    let dn_line = format!("dn: {}", obj.dn().unwrap_or(""));
-    let sid_line = obj
-        .object_sid()
-        .map(|s| format!("sid: {s}"))
-        .unwrap_or_default();
-
-    let mut children = vec![
-        text(title).size(16).into(),
-        text(dn_line).into(),
-    ];
-    if !sid_line.is_empty() {
-        children.push(text(sid_line).into());
-    }
-    column(children).spacing(2).into()
 }
 
 fn view_attributes(obj: &Object) -> Element<'_, Message> {
@@ -164,11 +157,7 @@ fn view_acl<'a>(
                 )
                 .on_press(Message::SelectAce(i))
                 .padding(2)
-                .style(if is_sel {
-                    crate::theme::selected
-                } else {
-                    crate::theme::plain
-                });
+                .style(move |t, s| crate::theme::sidebar_buffer(t, s, is_sel));
 
                 let row_el: Element<'a, Message> = if is_sel {
                     row![
@@ -176,7 +165,7 @@ fn view_acl<'a>(
                         button(text("Copy"))
                             .on_press(Message::CopyToClipboard(row_text))
                             .padding(2)
-                            .style(crate::theme::plain),
+                            .style(|t, s| crate::theme::secondary(t, s)),
                     ]
                     .spacing(4)
                     .into()
