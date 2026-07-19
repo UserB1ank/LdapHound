@@ -7,7 +7,7 @@
 //!   matching on DN / name. Reserved for the CLI `--type` / `--filter` flags
 //!   and the GUI filter box.
 
-use crate::snapshot::Snapshot;
+use crate::snapshot::{Object, Snapshot};
 use crate::Sid;
 
 /// Resolve a user-supplied object query to a snapshot index.
@@ -126,5 +126,22 @@ impl Filter {
     /// True if this filter is trivially passing (no constraints).
     pub fn is_empty(&self) -> bool {
         self.types.is_empty() && self.name_contains.is_none()
+    }
+
+    /// True if the object passes both the type allow-list and the substring
+    /// constraint. An empty filter matches everything.
+    pub fn matches(&self, obj: &Object) -> bool {
+        if !self.types.is_empty() && !self.types.contains(&obj.object_type()) {
+            return false;
+        }
+        if let Some(needle) = &self.name_contains {
+            let needle = needle.to_ascii_lowercase();
+            let dn = obj.dn().unwrap_or("").to_ascii_lowercase();
+            let name = obj.display_name().to_ascii_lowercase();
+            if !dn.contains(&needle) && !name.contains(&needle) {
+                return false;
+            }
+        }
+        true
     }
 }

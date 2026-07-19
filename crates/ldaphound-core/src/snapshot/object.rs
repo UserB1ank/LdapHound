@@ -159,4 +159,40 @@ impl Object {
         }
         "<unknown>".to_string()
     }
+
+    /// Coarse LDAP type derived from `objectClass`. Mirrors the categories
+    /// BloodHound and most AD tooling care about.
+    ///
+    /// Selection notes:
+    /// - `computer` is checked before `user` because computer objects also
+    ///   carry `user` in their class hierarchy.
+    /// - `domain` matches both real domains and DNS zones (which share the
+    ///   `domain` class); callers needing to distinguish should check
+    ///   `objectSid` presence — DNS zones have none.
+    pub fn object_type(&self) -> crate::filter::ObjectType {
+        use crate::filter::ObjectType;
+        let classes = self.object_classes();
+        if classes.iter().any(|c| c == "computer") {
+            return ObjectType::Computer;
+        }
+        if classes.iter().any(|c| c == "user") {
+            return ObjectType::User;
+        }
+        if classes.iter().any(|c| c == "group") {
+            return ObjectType::Group;
+        }
+        if classes.iter().any(|c| c == "domain") {
+            return ObjectType::Domain;
+        }
+        if classes.iter().any(|c| c == "organizationalunit") {
+            return ObjectType::Ou;
+        }
+        if classes.iter().any(|c| c == "container") {
+            return ObjectType::Container;
+        }
+        if classes.iter().any(|c| c == "grouppolicycontainer") {
+            return ObjectType::Gpo;
+        }
+        ObjectType::Other
+    }
 }
