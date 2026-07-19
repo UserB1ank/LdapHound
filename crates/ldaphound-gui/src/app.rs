@@ -124,16 +124,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                         snap.header.server,
                     );
                     let tree = snap.build_tree();
-                    let mut expanded = HashSet::new();
-                    for root in &tree.roots {
-                        if !root.is_synthetic() {
-                            if let Some(dn) = snap.objects[root.obj_idx].dn() {
-                                expanded.insert(dn.to_ascii_lowercase());
-                            }
-                        }
-                    }
+                    // Tree starts fully collapsed — user expands nodes as
+                    // needed via the chevrons.
                     app.tree = Some(tree);
-                    app.expanded = expanded;
+                    app.expanded = HashSet::new();
                     app.selected = None;
                     app.selected_ace = None;
                     app.acl_cache = crate::view::object_view::AclCache::default();
