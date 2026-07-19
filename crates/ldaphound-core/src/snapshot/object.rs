@@ -160,6 +160,26 @@ impl Object {
         "<unknown>".to_string()
     }
 
+    /// Best human-readable login-style identifier. Prefers attributes that
+    /// uniquely identify security principals in tooling output:
+    /// `sAMAccountName` (e.g. `j.arbuckle`, `DC01$`) → `userPrincipalName`
+    /// (e.g. `user@domain`) → [`display_name`]. Used for ACL trustee
+    /// rendering so users see a recognizable name instead of just a SID or
+    /// DN component.
+    pub fn principal_name(&self) -> String {
+        if let Some(s) = self.get_first("sAMAccountName").and_then(AttributeValue::as_str) {
+            if !s.is_empty() {
+                return s.to_string();
+            }
+        }
+        if let Some(s) = self.get_first("userPrincipalName").and_then(AttributeValue::as_str) {
+            if !s.is_empty() {
+                return s.to_string();
+            }
+        }
+        self.display_name()
+    }
+
     /// Coarse LDAP type derived from `objectClass`. Mirrors the categories
     /// BloodHound and most AD tooling care about.
     ///

@@ -46,6 +46,12 @@ pub struct App {
     active_tab: usize,
     /// Sidebar filter text (substring on DN / display name).
     filter: String,
+    /// Cached ACL display data for the currently-selected object. Rebuilt
+    /// whenever the selection changes; borrowed by `view_acl` so it can
+    /// hand `&str` to read-only `text_input` widgets (selectable text).
+    /// Always `Some` — defaults to an empty cache when no object is
+    /// selected (main_pane bails out before reading it).
+    acl_cache: crate::view::object_view::AclCache,
 
     status: String,
     parsing: bool,
@@ -68,6 +74,7 @@ pub fn new() -> App {
         selected_ace: None,
         active_tab: 0,
         filter: String::new(),
+        acl_cache: crate::view::object_view::AclCache::default(),
         status: "Open a .dat snapshot to begin.".into(),
         parsing: false,
     }
@@ -129,6 +136,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.expanded = expanded;
                     app.selected = None;
                     app.selected_ace = None;
+                    app.acl_cache = crate::view::object_view::AclCache::default();
                     app.filter.clear();
                     app.snapshot = Some(snap);
                 }
@@ -147,6 +155,13 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::SelectNode(i) => {
             app.selected = Some(i);
             app.selected_ace = None;
+            // Rebuild ACL cache for the newly-selected object so the view
+            // can borrow stable &str values for selectable text_input rows.
+            if let Some(snap) = app.snapshot.as_ref() {
+                if let Some(o) = snap.objects.get(i) {
+                    app.acl_cache = crate::view::object_view::build_acl_cache(o, snap);
+                }
+            }
             Task::none()
         }
         Message::SelectAce(i) => {
@@ -214,6 +229,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
             let selected = app.selected;
             let selected_ace = app.selected_ace;
             let active_tab = app.active_tab;
+            let filter = &app.filter;
+            let parsing = app.parsing;
+            // ACL cache: pre-built on SelectNode; defaults to empty when
+            // nothing is selected (main_pane bails on selected=None first).
+            let acl_cache: &crate::view::object_view::AclCache = &app.acl_cache;
 
             let pane_grid: Element<'_, Message> = PaneGrid::new(&app.panes, move |_id, pane, _m| {
                 let element: iced::Element<'_, Message> = match pane {
@@ -222,10 +242,16 @@ pub fn view(app: &App) -> Element<'_, Message> {
                         tree,
                         expanded,
                         selected,
-                        &app.filter,
-                        app.parsing,
+                        filter,
+                        parsing,
                     ),
-                    Pane::Main => main_pane(selected, selected_ace, active_tab, snap),
+                    Pane::Main => main_pane(
+                        selected,
+                        selected_ace,
+                        active_tab,
+                        snap,
+                        acl_cache,
+                    ),
                 };
                 pane_grid::Content::new(element)
             })
@@ -264,12 +290,13 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
 /// Render the Main pane: a title bar with the object's display name + class,
 /// then the body (Attributes / ACL tabs).
-fn main_pane(
+fn main_pane<'a>(
     selected: Option<usize>,
     selected_ace: Option<usize>,
     active_tab: usize,
-    snap: &Snapshot,
-) -> Element<'_, Message> {
+    snap: &'a Snapshot,
+    acl_cache: &'a crate::view::object_view::AclCache,
+) -> Element<'a, Message> {
     let Some(idx) = selected else {
         return container(text("Select an object in the tree."))
             .center(Length::Fill)
@@ -307,7 +334,7 @@ fn main_pane(
     .width(Length::Fill)
     .style(|t| crate::theme::pane_title_bar(t));
 
-    let body = object_view::view(obj, snap, selected_ace, active_tab);
+    let body = object_view::view(obj, snap, selected_ace, active_tab, acl_cache);
 
     column![title_bar, body]
         .width(Length::Fill)
