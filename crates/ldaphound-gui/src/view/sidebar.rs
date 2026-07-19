@@ -104,23 +104,25 @@ fn row_label<'a>(
         button(chevron)
             .on_press(Message::ToggleNode(dn_lower))
             .padding(2)
+            .style(crate::theme::plain)
             .into()
     } else {
         chevron.into()
     };
 
-    // Leaf RDN (first component of DN) keeps the tree readable. Prefix with
-    // "▶ " when selected since iced 0.14 has no theme::Button style enum.
+    // Leaf RDN (first component of DN) keeps the tree readable. Selection
+    // is shown purely by background colour — no glyph prefix (the previous
+    // ▶ marker rendered as a media-play icon in some fonts).
     let dn = obj.dn().unwrap_or("?");
     let rdn = dn.split(',').next().unwrap_or(dn).to_string();
-    let label_str = if is_selected {
-        format!("▶ {rdn}")
-    } else {
-        rdn
-    };
-    let label_btn: Element<'a, Message> = button(text(label_str))
+    let label_btn: Element<'a, Message> = button(text(rdn))
         .on_press(Message::SelectNode(obj_idx))
         .padding(2)
+        .style(if is_selected {
+            crate::theme::selected
+        } else {
+            crate::theme::plain
+        })
         .into();
 
     row![

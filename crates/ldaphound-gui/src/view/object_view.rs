@@ -1,22 +1,23 @@
 //! Right pane — selected object's details.
 //!
-//! Vertical stack inside one scrollable:
-//! 1. Header (display name, objectClass, DN, SID)
-//! 2. Attributes list (name | value), sorted alphabetically
-//! 3. ACL breakdown: owner/group/flags, then a column-aligned ACE grid with
-//!    selectable rows. Selecting a row highlights it and exposes a copy
-//!    action that writes the whole row (tab-separated) to the clipboard.
+//! Layout: fixed header (display name + DN + SID), then an `iced_aw::Tabs`
+//! switching between Attributes (sorted name|value list) and ACL (owner,
+//! flags, and a column-aligned ACE grid with selectable rows).
 
 use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Element, FillPortion, Length};
+use iced_aw::{TabLabel, Tabs};
 
 use ldaphound_core::security::descriptor::SecurityDescriptor;
 use ldaphound_core::{Object, Snapshot};
 
 use crate::message::Message;
 
-// Fixed column widths (in portion units) for the ACE grid. Header and every
-// row must use the same proportions so the columns line up visually.
+// Tab indices — kept in sync with the order tabs are pushed below.
+const TAB_ATTRIBUTES: usize = 0;
+const TAB_ACL: usize = 1;
+
+// Fixed column widths (portion units) for the ACE grid.
 const COL_IDX: u16 = 1;
 const COL_KIND: u16 = 4;
 const COL_RIGHT: u16 = 14;
@@ -28,7 +29,33 @@ pub fn view<'a>(
     obj: &'a Object,
     snap: &'a Snapshot,
     selected_ace: Option<usize>,
+    active_tab: usize,
 ) -> Element<'a, Message> {
+    let header = view_header(obj);
+
+    let tabs = Tabs::new(Message::TabSelected)
+        .push(
+            TAB_ATTRIBUTES,
+            TabLabel::Text("Attributes".into()),
+            view_attributes(obj),
+        )
+        .push(
+            TAB_ACL,
+            TabLabel::Text("ACL".into()),
+            view_acl(obj, snap, selected_ace),
+        )
+        .set_active_tab(&active_tab)
+        .height(Length::Fill);
+
+    let col = column![header, tabs].spacing(8);
+    container(scrollable(col))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(4)
+        .into()
+}
+
+fn view_header(obj: &Object) -> Element<'_, Message> {
     let title = format!(
         "{} ({})",
         obj.display_name(),
@@ -40,7 +67,17 @@ pub fn view<'a>(
         .map(|s| format!("sid: {s}"))
         .unwrap_or_default();
 
-    // Pre-extract attribute display rows.
+    let mut children = vec![
+        text(title).size(16).into(),
+        text(dn_line).into(),
+    ];
+    if !sid_line.is_empty() {
+        children.push(text(sid_line).into());
+    }
+    column(children).spacing(2).into()
+}
+
+fn view_attributes(obj: &Object) -> Element<'_, Message> {
     let mut attrs: Vec<(&String, String)> = obj
         .attributes
         .iter()
@@ -48,26 +85,9 @@ pub fn view<'a>(
         .collect();
     attrs.sort_by(|a, b| a.0.cmp(b.0));
 
-    let acl = match obj.ntsd_bytes() {
-        Some(b) => AclView::from_bytes(b, snap),
-        None => AclView::Absent,
-    };
-
-    let mut children: Vec<Element<'a, Message>> = Vec::new();
-    children.push(text(title).size(16).into());
-    children.push(text(dn_line).into());
-    if !sid_line.is_empty() {
-        children.push(text(sid_line).into());
-    }
-
-    // Attributes section.
-    children.push(
-        text(format!("Attributes ({})", attrs.len()))
-            .size(13)
-            .into(),
-    );
+    let mut rows: Vec<Element<'_, Message>> = Vec::new();
     for (name, joined) in attrs {
-        children.push(
+        rows.push(
             row![
                 text(format!("{name}:")).width(FillPortion(2)),
                 text(joined).width(FillPortion(5)),
@@ -76,8 +96,23 @@ pub fn view<'a>(
             .into(),
         );
     }
+    if rows.is_empty() {
+        rows.push(text("(no attributes)").into());
+    }
+    column(rows).spacing(2).into()
+}
 
-    // ACL section.
+fn view_acl<'a>(
+    obj: &'a Object,
+    snap: &'a Snapshot,
+    selected_ace: Option<usize>,
+) -> Element<'a, Message> {
+    let acl = match obj.ntsd_bytes() {
+        Some(b) => AclView::from_bytes(b, snap),
+        None => AclView::Absent,
+    };
+
+    let mut children: Vec<Element<'a, Message>> = Vec::new();
     match acl {
         AclView::Absent => children.push(text("(no nTSecurityDescriptor)").into()),
         AclView::Err(e) => children.push(text(format!("SD parse error: {e}")).into()),
@@ -86,7 +121,7 @@ pub fn view<'a>(
             owner,
             aces,
         } => {
-            children.push(text(header).size(13).into());
+            children.push(text(header).into());
             children.push(text(format!("owner: {owner}")).into());
             children.push(text(format!("DACL ({} ACEs):", aces.len())).into());
 
@@ -104,16 +139,14 @@ pub fn view<'a>(
                 .into(),
             );
 
-            // Body rows. Each row is a button that selects the ACE; a side
-            // "Copy" button appears only on the currently-selected row.
+            // Body rows. Selection is shown by background colour (no glyph).
             for (i, ace) in aces.iter().enumerate() {
                 let is_sel = selected_ace == Some(i);
-                let prefix = if is_sel { "▶ " } else { "  " };
                 let row_text = format_ace_row(i, ace);
 
                 let row_btn = button(
                     row![
-                        cell_text(format!("{prefix}{}", i), COL_IDX),
+                        cell_text(i, COL_IDX),
                         cell_text(&ace.kind, COL_KIND),
                         cell_text(&ace.right, COL_RIGHT),
                         cell_text(&ace.mask, COL_MASK),
@@ -126,14 +159,20 @@ pub fn view<'a>(
                     .spacing(4),
                 )
                 .on_press(Message::SelectAce(i))
-                .padding(2);
+                .padding(2)
+                .style(if is_sel {
+                    crate::theme::selected
+                } else {
+                    crate::theme::plain
+                });
 
                 let row_el: Element<'a, Message> = if is_sel {
                     row![
                         row_btn,
                         button(text("Copy"))
                             .on_press(Message::CopyToClipboard(row_text))
-                            .padding(2),
+                            .padding(2)
+                            .style(crate::theme::plain),
                     ]
                     .spacing(4)
                     .into()
@@ -144,17 +183,13 @@ pub fn view<'a>(
             }
         }
     }
-
-    let col = column(children).spacing(6);
-    container(scrollable(col))
-        .width(Length::FillPortion(3))
-        .height(Length::Fill)
-        .padding(4)
-        .into()
+    column(children).spacing(4).into()
 }
 
 fn cell_text(s: impl ToString, portion: u16) -> Element<'static, Message> {
-    text(s.to_string()).width(Length::FillPortion(portion)).into()
+    text(s.to_string())
+        .width(Length::FillPortion(portion))
+        .into()
 }
 
 fn format_attr_values(values: &[ldaphound_core::snapshot::AttributeValue]) -> String {

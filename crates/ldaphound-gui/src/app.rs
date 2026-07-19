@@ -29,6 +29,8 @@ pub struct App {
     /// Selected ACE index within the current object's DACL (for highlight +
     /// clipboard copy). Reset whenever the selected object changes.
     selected_ace: Option<usize>,
+    /// Right pane active tab: 0 = Attributes, 1 = ACL.
+    active_tab: usize,
 
     status: String,
     parsing: bool,
@@ -41,6 +43,7 @@ pub fn new() -> App {
         expanded: HashSet::new(),
         selected: None,
         selected_ace: None,
+        active_tab: 0,
         status: "Open a .dat snapshot to begin.".into(),
         parsing: false,
     }
@@ -137,6 +140,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.status = format!("Copied {s:?} to clipboard");
             iced::clipboard::write(s)
         }
+        Message::TabSelected(tab) => {
+            app.active_tab = tab;
+            Task::none()
+        }
     }
 }
 
@@ -157,7 +164,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
         (Some(snap), Some(tree)) => {
             let left = sidebar::view(snap, tree, &app.expanded, app.selected);
             let right = match app.selected.and_then(|i| snap.objects.get(i)) {
-                Some(o) => object_view::view(o, snap, app.selected_ace),
+                Some(o) => object_view::view(o, snap, app.selected_ace, app.active_tab),
                 None => container(text("Select an object in the tree."))
                     .center(Length::Fill)
                     .into(),

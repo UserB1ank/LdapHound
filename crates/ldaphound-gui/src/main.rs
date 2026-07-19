@@ -13,6 +13,7 @@
 mod app;
 mod message;
 mod task;
+mod theme;
 mod view;
 
 fn main() -> iced::Result {

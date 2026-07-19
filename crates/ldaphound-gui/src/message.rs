@@ -22,4 +22,7 @@ pub enum Message {
     SelectAce(usize),
     /// Copy the given text to the system clipboard.
     CopyToClipboard(String),
+
+    /// Switch the right pane between Attributes (0) and ACL (1).
+    TabSelected(usize),
 }
