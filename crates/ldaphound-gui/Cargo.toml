@@ -1,0 +1,18 @@
+[package]
+name = "ldaphound-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "GUI for browsing ACL relationships in ADExplorer snapshots"
+
+[[bin]]
+name = "ldaphound-gui"
+path = "src/main.rs"
+
+[dependencies]
+ldaphound-core = { path = "../ldaphound-core" }
+iced = { version = "0.14", features = ["tokio"] }
+memmap2 = "0.9"
+rfd = "0.15"
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
