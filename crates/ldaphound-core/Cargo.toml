@@ -17,3 +17,4 @@ path = "src/bin/cli.rs"
 [dependencies]
 memmap2 = "0.9"
 thiserror = "2"
+clap = { version = "4.0", features = ["derive"] }

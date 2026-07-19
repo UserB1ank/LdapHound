@@ -206,3 +206,35 @@ impl AttributeValue {
         }
     }
 }
+
+impl std::fmt::Display for AttributeValue {
+    /// Best-effort single-line display for `ldapsearch`-style output.
+    /// Octet strings render as hex; large blobs (NT SD) are truncated with
+    /// a byte count. Callers needing structured access (SID/GUID/SD) should
+    /// match on the variant instead of using this display.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AttributeValue::String(s) => f.write_str(s),
+            AttributeValue::Integer(i) => write!(f, "{i}"),
+            AttributeValue::LargeInteger(i) => write!(f, "{i}"),
+            AttributeValue::Boolean(b) => write!(f, "{}", if *b { "TRUE" } else { "FALSE" }),
+            AttributeValue::UtcTime(t) => write!(f, "{t}"),
+            AttributeValue::OctetString(b) => write_hex(f, b),
+            AttributeValue::NtSecurityDescriptor(b) => {
+                if b.len() > 64 {
+                    write!(f, "<{} bytes>", b.len())
+                } else {
+                    write_hex(f, b)
+                }
+            }
+        }
+    }
+}
+
+fn write_hex(f: &mut std::fmt::Formatter<'_>, b: &[u8]) -> std::fmt::Result {
+    f.write_str("0x")?;
+    for byte in b {
+        write!(f, "{byte:02x}")?;
+    }
+    Ok(())
+}

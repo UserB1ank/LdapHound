@@ -4,7 +4,9 @@
 //! All public types are `Send + Sync` so they can be passed across threads
 //! (required by the GUI's async task layer).
 
+pub mod dump;
 pub mod error;
+pub mod filter;
 pub mod guid;
 pub mod le_reader;
 pub mod security;
