@@ -4,8 +4,8 @@
 //! switching between Attributes (sorted name|value list) and ACL (owner,
 //! flags, and a column-aligned ACE grid with selectable rows).
 
-use iced::widget::{button, column, container, row, scrollable, text};
-use iced::{Element, FillPortion, Length};
+use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::{Element, Length};
 use iced_aw::{TabLabel, Tabs};
 
 use ldaphound_core::security::descriptor::SecurityDescriptor;
@@ -87,13 +87,17 @@ fn view_attributes(obj: &Object) -> Element<'_, Message> {
 
     let mut rows: Vec<Element<'_, Message>> = Vec::new();
     for (name, joined) in attrs {
+        // Read-only text_input makes the value selectable + Ctrl+C-able.
+        // No on_input closure means edits are silently dropped (the field
+        // still re-renders from `joined` on each frame).
+        let name_el: iced::widget::Text<'_, iced::Theme, iced::Renderer> =
+            text(format!("{name}:")).width(Length::FillPortion(2));
+        let value_el: iced::widget::TextInput<'_, Message, iced::Theme, iced::Renderer> =
+            text_input("", &joined).width(Length::FillPortion(5));
         rows.push(
-            row![
-                text(format!("{name}:")).width(FillPortion(2)),
-                text(joined).width(FillPortion(5)),
-            ]
-            .spacing(8)
-            .into(),
+            row![name_el, value_el]
+                .spacing(4)
+                .into(),
         );
     }
     if rows.is_empty() {

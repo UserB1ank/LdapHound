@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use iced::widget::pane_grid;
 use ldaphound_core::Snapshot;
 
 #[derive(Debug, Clone)]
@@ -25,4 +26,8 @@ pub enum Message {
 
     /// Switch the right pane between Attributes (0) and ACL (1).
     TabSelected(usize),
+
+    /// User dragged the divider between sidebar and main panes.
+    PaneResized(pane_grid::ResizeEvent),
 }
+

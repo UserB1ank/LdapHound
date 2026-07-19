@@ -32,9 +32,10 @@ pub fn view<'a>(
     let body = column(rows).spacing(1);
     let scroll = scrollable(body);
     container(scroll)
-        .width(Length::FillPortion(2))
+        // pane_grid manages the width; just fill whatever it gives us.
+        .width(Length::Fill)
         .height(Length::Fill)
-        .padding(4)
+        .padding(2)
         .into()
 }
 

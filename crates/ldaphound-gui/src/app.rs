@@ -1,12 +1,13 @@
 //! App state + Elm update loop (function-style, iced 0.14).
 //!
-//! Layout (halloy-inspired): `row![sidebar, main]`.
-//! - Sidebar: scrollable recursive tree of AD naming contexts.
-//! - Main: selected object's header + attributes + ACL breakdown.
+//! Layout: top header bar, then a `pane_grid` with two panes separated by a
+//! draggable divider — left = AD tree sidebar, right = selected object's
+//! details (Attributes / ACL tabs).
 
 use std::collections::HashSet;
 
 use iced::Task;
+use iced::widget::pane_grid::{self, PaneGrid};
 use iced::widget::{button, column, container, row, text};
 use iced::{Alignment, Element, Length};
 
@@ -16,18 +17,26 @@ use crate::message::Message;
 use crate::task;
 use crate::view::{object_view, sidebar};
 
+/// Right-pane kind so PaneGrid can dispatch view per pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Sidebar,
+    Main,
+}
+
 /// Application state.
 pub struct App {
     snapshot: Option<Snapshot>,
     tree: Option<Tree>,
 
-    /// DNs (lowercased) of currently-expanded tree nodes. Defaults to the
-    /// three NC roots when a snapshot loads.
+    /// Two-pane layout: [Sidebar | Main] with a draggable divider.
+    panes: pane_grid::State<Pane>,
+
+    /// DNs (lowercased) of currently-expanded tree nodes.
     expanded: HashSet<String>,
     /// Selected object index, shown in the right pane.
     selected: Option<usize>,
-    /// Selected ACE index within the current object's DACL (for highlight +
-    /// clipboard copy). Reset whenever the selected object changes.
+    /// Selected ACE index within the current object's DACL.
     selected_ace: Option<usize>,
     /// Right pane active tab: 0 = Attributes, 1 = ACL.
     active_tab: usize,
@@ -37,9 +46,16 @@ pub struct App {
 }
 
 pub fn new() -> App {
+    // Start with a single Sidebar pane; split it to the right to create the
+    // Main pane. The split returns the new pane's id, which we don't need
+    // to track explicitly since view() dispatches on Pane variant.
+    let (mut panes, _first) = pane_grid::State::new(Pane::Sidebar);
+    let _ = panes.split(pane_grid::Axis::Vertical, panes.panes.keys().next().copied().unwrap(), Pane::Main);
+
     App {
         snapshot: None,
         tree: None,
+        panes,
         expanded: HashSet::new(),
         selected: None,
         selected_ace: None,
@@ -93,7 +109,6 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                         snap.objects.len(),
                         snap.properties.len(),
                     );
-                    // Build tree, expand the 3 NC roots by default.
                     let tree = snap.build_tree();
                     let mut expanded = HashSet::new();
                     for root in &tree.roots {
@@ -123,12 +138,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         }
         Message::SelectNode(i) => {
             app.selected = Some(i);
-            // Reset ACE selection when switching objects — index is per-object.
             app.selected_ace = None;
             Task::none()
         }
         Message::SelectAce(i) => {
-            // Toggle: clicking the same ACE again deselects it.
             app.selected_ace = if app.selected_ace == Some(i) {
                 None
             } else {
@@ -137,11 +150,15 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::CopyToClipboard(s) => {
-            app.status = format!("Copied {s:?} to clipboard");
+            app.status = format!("Copied {} chars to clipboard", s.len());
             iced::clipboard::write(s)
         }
         Message::TabSelected(tab) => {
             app.active_tab = tab;
+            Task::none()
+        }
+        Message::PaneResized(pane_grid::ResizeEvent { split, ratio }) => {
+            app.panes.resize(split, ratio);
             Task::none()
         }
     }
@@ -162,18 +179,30 @@ pub fn view(app: &App) -> Element<'_, Message> {
 
     let body: Element<'_, Message> = match (&app.snapshot, &app.tree) {
         (Some(snap), Some(tree)) => {
-            let left = sidebar::view(snap, tree, &app.expanded, app.selected);
-            let right = match app.selected.and_then(|i| snap.objects.get(i)) {
-                Some(o) => object_view::view(o, snap, app.selected_ace, app.active_tab),
-                None => container(text("Select an object in the tree."))
-                    .center(Length::Fill)
-                    .into(),
-            };
-            row![left, right]
-                .spacing(4)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
+            // Capture only shared refs so the Fn closure can re-build per
+            // pane on each layout pass without moving owned Elements.
+            let expanded = &app.expanded;
+            let selected = app.selected;
+            let selected_ace = app.selected_ace;
+            let active_tab = app.active_tab;
+
+            PaneGrid::new(&app.panes, move |_id, pane, _maximized| {
+                let element: iced::Element<'_, Message> = match pane {
+                    Pane::Sidebar => sidebar::view(snap, tree, expanded, selected),
+                    Pane::Main => match selected.and_then(|i| snap.objects.get(i)) {
+                        Some(o) => object_view::view(o, snap, selected_ace, active_tab),
+                        None => container(text("Select an object in the tree."))
+                            .center(Length::Fill)
+                            .into(),
+                    },
+                };
+                pane_grid::Content::new(element)
+            })
+            .spacing(4) // divider thickness (draggable area)
+            .on_resize(8, Message::PaneResized)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
         }
         _ => container(text("No snapshot loaded."))
             .center(Length::Fill)
@@ -181,12 +210,9 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .into(),
     };
 
-    // NOTE: no outer scrollable — sidebar/main each carry their own inner
-    // scrollable. An outer scrollable gives body Length::Fill no reference
-    // height, collapsing both panes to zero.
     let content = column![header, body].spacing(8).height(Length::Fill);
     container(content)
-        .padding(12)
+        .padding(4)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
