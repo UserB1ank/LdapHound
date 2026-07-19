@@ -12,9 +12,11 @@ pub mod le_reader;
 pub mod security;
 pub mod sid;
 pub mod snapshot;
+pub mod tree;
 
 pub use error::{ParseError, Result as ParseErrorResult};
 pub use guid::Guid;
 pub use security::{AccessMask, Ace, AceFlags, AceType, Acl, SecurityDescriptor};
 pub use sid::Sid;
 pub use snapshot::{Header, Object, Property, Snapshot};
+pub use tree::{Tree, TreeNode};

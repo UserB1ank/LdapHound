@@ -1,48 +1,47 @@
 //! App state + Elm update loop (function-style, iced 0.14).
+//!
+//! Layout (halloy-inspired): `row![sidebar, main]`.
+//! - Sidebar: scrollable recursive tree of AD naming contexts.
+//! - Main: selected object's header + attributes + ACL breakdown.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::HashSet;
 
 use iced::Task;
 use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Length};
 
-use ldaphound_core::{Sid, Snapshot};
+use ldaphound_core::{Snapshot, Tree};
 
 use crate::message::Message;
 use crate::task;
-use crate::view::{ace_panel, object_list};
+use crate::view::{object_view, sidebar};
 
 /// Application state.
 pub struct App {
     snapshot: Option<Snapshot>,
-    /// SID → object index lookup, built after parse for resolving ACE
-    /// trustees to display names.
-    sid_index: HashMap<Sid, usize>,
+    tree: Option<Tree>,
 
-    filter: String,
-    /// Indices into `snapshot.objects` that pass the current filter.
-    filtered_indices: Vec<usize>,
-    selected_object: Option<usize>,
+    /// DNs (lowercased) of currently-expanded tree nodes. Defaults to the
+    /// three NC roots when a snapshot loads.
+    expanded: HashSet<String>,
+    /// Selected object index, shown in the right pane.
+    selected: Option<usize>,
 
     status: String,
     parsing: bool,
 }
 
-/// Construct the initial empty state. iced calls this on startup.
 pub fn new() -> App {
     App {
         snapshot: None,
-        sid_index: HashMap::new(),
-        filter: String::new(),
-        filtered_indices: Vec::new(),
-        selected_object: None,
+        tree: None,
+        expanded: HashSet::new(),
+        selected: None,
         status: "Open a .dat snapshot to begin.".into(),
         parsing: false,
     }
 }
 
-/// Compute the window title from current state.
 pub fn title(app: &App) -> String {
     match &app.snapshot {
         Some(s) => format!("LdapHound — {}", s.header.server),
@@ -50,7 +49,6 @@ pub fn title(app: &App) -> String {
     }
 }
 
-/// The Elm update function: react to a message, return new state + any Task.
 pub fn update(app: &mut App, message: Message) -> Task<Message> {
     match message {
         Message::OpenFileClicked => {
@@ -88,28 +86,40 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                         snap.objects.len(),
                         snap.properties.len(),
                     );
+                    // Build tree, expand the 3 NC roots by default.
+                    let tree = snap.build_tree();
+                    let mut expanded = HashSet::new();
+                    for root in &tree.roots {
+                        if !root.is_synthetic() {
+                            if let Some(dn) = snap.objects[root.obj_idx].dn() {
+                                expanded.insert(dn.to_ascii_lowercase());
+                            }
+                        }
+                    }
+                    app.tree = Some(tree);
+                    app.expanded = expanded;
+                    app.selected = None;
                     app.snapshot = Some(snap);
-                    build_sid_index(app);
-                    app.selected_object = None;
-                    recompute_filter(app);
                 }
-                Err(e) => app.status = format!("Parse failed: {e}"), // e is String
+                Err(e) => app.status = format!("Parse failed: {e}"),
             }
             Task::none()
         }
-        Message::FilterChanged(s) => {
-            app.filter = s;
-            recompute_filter(app);
+        Message::ToggleNode(dn) => {
+            if app.expanded.contains(&dn) {
+                app.expanded.remove(&dn);
+            } else {
+                app.expanded.insert(dn);
+            }
             Task::none()
         }
-        Message::ObjectSelected(i) => {
-            app.selected_object = Some(i);
+        Message::SelectNode(i) => {
+            app.selected = Some(i);
             Task::none()
         }
     }
 }
 
-/// The view function: render the current state as an iced widget tree.
 pub fn view(app: &App) -> Element<'_, Message> {
     let header = row![
         text("LdapHound").size(20),
@@ -123,16 +133,18 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .spacing(12)
     .align_y(Alignment::Center);
 
-    let body: Element<Message> = match &app.snapshot {
-        Some(snap) => {
-            let left = object_list::view(snap, &app.filter, &app.filtered_indices, app.selected_object);
-            let right = match app.selected_object.and_then(|i| snap.objects.get(i)) {
-                Some(o) => ace_panel::view(o, snap, &app.sid_index),
-                None => container(text("Select an object.")).center(Length::Fill).into(),
+    let body: Element<'_, Message> = match (&app.snapshot, &app.tree) {
+        (Some(snap), Some(tree)) => {
+            let left = sidebar::view(snap, tree, &app.expanded, app.selected);
+            let right = match app.selected.and_then(|i| snap.objects.get(i)) {
+                Some(o) => object_view::view(o, snap),
+                None => container(text("Select an object in the tree."))
+                    .center(Length::Fill)
+                    .into(),
             };
-            row![left, right].spacing(8).height(Length::Fill).into()
+            row![left, right].spacing(4).height(Length::Fill).into()
         }
-        None => container(text("No snapshot loaded."))
+        _ => container(text("No snapshot loaded."))
             .center(Length::Fill)
             .height(Length::Fill)
             .into(),
@@ -145,37 +157,3 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .height(Length::Fill)
         .into()
 }
-
-fn recompute_filter(app: &mut App) {
-    app.filtered_indices.clear();
-    if let Some(snap) = &app.snapshot {
-        let f = app.filter.trim().to_ascii_lowercase();
-        for (i, o) in snap.objects.iter().enumerate() {
-            if f.is_empty() {
-                app.filtered_indices.push(i);
-                continue;
-            }
-            let dn = o.dn().unwrap_or("").to_ascii_lowercase();
-            let name = o.display_name().to_ascii_lowercase();
-            if dn.contains(&f) || name.contains(&f) {
-                app.filtered_indices.push(i);
-            }
-        }
-    }
-}
-
-fn build_sid_index(app: &mut App) {
-    app.sid_index.clear();
-    if let Some(snap) = &app.snapshot {
-        for (i, o) in snap.objects.iter().enumerate() {
-            if let Some(sid) = o.object_sid() {
-                app.sid_index.insert(sid, i);
-            }
-        }
-    }
-}
-
-// Suppress unused warning for PathBuf re-export if any. Kept for clarity
-// for downstream tasks that accept paths.
-#[allow(dead_code)]
-fn _path_type_hint(_: PathBuf) {}
