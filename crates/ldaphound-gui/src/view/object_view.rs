@@ -4,7 +4,7 @@
 //! switching between Attributes (sorted name|value list) and ACL (owner,
 //! flags, and a column-aligned ACE grid with selectable rows).
 
-use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, row, scrollable, text};
 use iced::{Element, Length};
 use iced_aw::{TabLabel, Tabs};
 
@@ -16,14 +16,6 @@ use crate::message::Message;
 // Tab indices — kept in sync with the order tabs are pushed below.
 const TAB_ATTRIBUTES: usize = 0;
 const TAB_ACL: usize = 1;
-
-// Fixed column widths (portion units) for the ACE grid.
-const COL_IDX: u16 = 1;
-const COL_KIND: u16 = 4;
-const COL_RIGHT: u16 = 14;
-const COL_MASK: u16 = 10;
-const COL_INHERITED: u16 = 5;
-const COL_TRUSTEE: u16 = 22;
 
 pub fn view<'a>(
     obj: &'a Object,
@@ -70,28 +62,18 @@ pub fn view<'a>(
         .into()
 }
 
-fn view_attributes(obj: &Object) -> Element<'_, Message> {
-    let mut attrs: Vec<(&String, String)> = obj
+fn view_attributes(obj: &Object) -> Element<'static, Message> {
+    // Collect owned (name, value) pairs so the rendered rows are 'static.
+    let mut attrs: Vec<(String, String)> = obj
         .attributes
         .iter()
-        .map(|(k, a)| (k, format_attr_values(&a.values)))
+        .map(|(k, a)| (k.clone(), format_attr_values(&a.values)))
         .collect();
-    attrs.sort_by(|a, b| a.0.cmp(b.0));
+    attrs.sort_by(|a, b| a.0.cmp(&b.0));
 
-    let mut rows: Vec<Element<'_, Message>> = Vec::new();
-    for (name, joined) in attrs {
-        // Read-only text_input makes the value selectable + Ctrl+C-able.
-        // No on_input closure means edits are silently dropped (the field
-        // still re-renders from `joined` on each frame).
-        let name_el: iced::widget::Text<'_, iced::Theme, iced::Renderer> =
-            text(format!("{name}:")).width(Length::FillPortion(2));
-        let value_el: iced::widget::TextInput<'_, Message, iced::Theme, iced::Renderer> =
-            text_input("", &joined).width(Length::FillPortion(5));
-        rows.push(
-            row![name_el, value_el]
-                .spacing(4)
-                .into(),
-        );
+    let mut rows: Vec<Element<'static, Message>> = Vec::new();
+    for (name, value) in &attrs {
+        rows.push(name_value_row(name, value));
     }
     if rows.is_empty() {
         rows.push(text("(no attributes)").into());
@@ -109,80 +91,73 @@ fn view_acl<'a>(
         None => AclView::Absent,
     };
 
-    let mut children: Vec<Element<'a, Message>> = Vec::new();
     match acl {
-        AclView::Absent => children.push(text("(no nTSecurityDescriptor)").into()),
-        AclView::Err(e) => children.push(text(format!("SD parse error: {e}")).into()),
+        AclView::Absent => text("(no nTSecurityDescriptor)").into(),
+        AclView::Err(e) => text(format!("SD parse error: {e}")).into(),
         AclView::Ok {
             header,
             owner,
             aces,
         } => {
+            // NOTE: aces, header, owner are owned by this arm's scope. We
+            // build every card here and return a single column of them; the
+            // cards' text_input values borrow these owned Strings, which stay
+            // alive until the column itself is dropped.
+            let mut children: Vec<Element<'a, Message>> = Vec::new();
             children.push(text(header).into());
             children.push(text(format!("owner: {owner}")).into());
             children.push(text(format!("DACL ({} ACEs):", aces.len())).into());
 
-            // Header row of the grid.
-            children.push(
-                row![
-                    cell_text("#", COL_IDX),
-                    cell_text("Kind", COL_KIND),
-                    cell_text("Right", COL_RIGHT),
-                    cell_text("Mask", COL_MASK),
-                    cell_text("Inherited", COL_INHERITED),
-                    cell_text("Trustee", COL_TRUSTEE),
-                ]
-                .spacing(4)
-                .into(),
-            );
-
-            // Body rows. Selection is shown by background colour (no glyph).
-            for (i, ace) in aces.iter().enumerate() {
+            for ace in aces.iter() {
+                let i = ace.idx;
                 let is_sel = selected_ace == Some(i);
                 let row_text = format_ace_row(i, ace);
 
-                let row_btn = button(
-                    row![
-                        cell_text(i, COL_IDX),
-                        cell_text(&ace.kind, COL_KIND),
-                        cell_text(&ace.right, COL_RIGHT),
-                        cell_text(&ace.mask, COL_MASK),
-                        cell_text(
-                            if ace.inherited { "inherited" } else { "explicit" },
-                            COL_INHERITED
-                        ),
-                        cell_text(&ace.trustee, COL_TRUSTEE),
-                    ]
-                    .spacing(4),
-                )
-                .on_press(Message::SelectAce(i))
-                .padding(2)
-                .style(move |t, s| crate::theme::sidebar_buffer(t, s, is_sel));
+                let mut field_rows: Vec<Element<'a, Message>> = Vec::new();
+                field_rows.push(name_value_row("#", &ace.idx_str));
+                field_rows.push(name_value_row("Kind", &ace.kind));
+                field_rows.push(name_value_row("Right", &ace.right));
+                field_rows.push(name_value_row("Mask", &ace.mask));
+                field_rows.push(name_value_row("Inherited", &ace.inherited_str));
+                field_rows.push(name_value_row("Trustee", &ace.trustee));
 
-                let row_el: Element<'a, Message> = if is_sel {
-                    row![
-                        row_btn,
-                        button(text("Copy"))
-                            .on_press(Message::CopyToClipboard(row_text))
-                            .padding(2)
-                            .style(|t, s| crate::theme::secondary(t, s)),
-                    ]
-                    .spacing(4)
-                    .into()
-                } else {
-                    row_btn.into()
-                };
-                children.push(row_el);
+                if is_sel {
+                    field_rows.push(
+                        row![
+                            iced::widget::Space::new().width(Length::Fill),
+                            button(text("Copy").size(12))
+                                .on_press(Message::CopyToClipboard(row_text))
+                                .padding([2, 6])
+                                .style(|t, s| crate::theme::secondary(t, s)),
+                        ]
+                        .into(),
+                    );
+                }
+
+                let card_body = column(field_rows).spacing(2);
+                let card = button(card_body)
+                    .on_press(Message::SelectAce(i))
+                    .padding(6)
+                    .width(Length::Fill)
+                    .style(move |t, s| crate::theme::sidebar_buffer(t, s, is_sel));
+
+                children.push(card.into());
             }
+            column(children).spacing(4).into()
         }
     }
-    column(children).spacing(4).into()
 }
 
-fn cell_text(s: impl ToString, portion: u16) -> Element<'static, Message> {
-    text(s.to_string())
-        .width(Length::FillPortion(portion))
-        .into()
+/// One `name: value` row. Value uses Text (owned via to_string) so the row
+/// is `'static` and can outlive any caller-local data — no lifetime tangle.
+/// Long values wrap naturally; clicking the enclosing card surfaces a Copy
+/// button that writes the full row to the clipboard.
+fn name_value_row(name: &str, value: &str) -> Element<'static, Message> {
+    let name_el: iced::widget::Text<'static, iced::Theme, iced::Renderer> =
+        text(name.to_string()).width(Length::FillPortion(2));
+    let value_el: iced::widget::Text<'static, iced::Theme, iced::Renderer> =
+        text(value.to_string()).width(Length::FillPortion(5));
+    row![name_el, value_el].spacing(4).into()
 }
 
 fn format_attr_values(values: &[ldaphound_core::snapshot::AttributeValue]) -> String {
@@ -218,10 +193,15 @@ enum AclView {
 }
 
 struct AceLine {
+    idx: usize,
+    idx_str: String,
     kind: String,
     right: String,
     mask: String,
     inherited: bool,
+    /// Pre-formatted string ("inherited" / "explicit") so view code doesn't
+    /// need to allocate a fresh String per render pass.
+    inherited_str: String,
     trustee: String,
 }
 
@@ -244,7 +224,8 @@ impl AclView {
                     .dacl
                     .iter()
                     .flat_map(|d| d.aces.iter())
-                    .map(|ace| {
+                    .enumerate()
+                    .map(|(idx, ace)| {
                         use ldaphound_core::security::AceType;
                         let kind = match ace.ace_type() {
                             AceType::AccessAllowed => "Allow",
@@ -260,6 +241,7 @@ impl AclView {
                             .map(|m| format!("{m} [{}]", m.human_names().join(",")))
                             .unwrap_or_else(|| "-".into());
                         let inherited = ace.is_inherited();
+                        let inherited_str = if inherited { "inherited".into() } else { "explicit".into() };
                         let trustee = match ace.trustee() {
                             Some(sid) => match find_by_sid(snap, sid) {
                                 Some(o) => format!(
@@ -272,10 +254,13 @@ impl AclView {
                             None => "-".into(),
                         };
                         AceLine {
+                            idx,
+                            idx_str: idx.to_string(),
                             kind,
                             right,
                             mask,
                             inherited,
+                            inherited_str,
                             trustee,
                         }
                     })
