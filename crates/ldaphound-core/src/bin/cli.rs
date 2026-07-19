@@ -11,15 +11,23 @@
 //!   ldaphound-cli snapshot.dat --object 42
 //!   ldaphound-cli snapshot.dat --object S-1-5-21-...-519
 //!
-//! Reserved (parsed but not yet applied — see `filter` module):
-//!   --type user --type computer   # filter by LDAP object type
-//!   --filter admin                # substring on DN / name
+//! Filtering:
+//!   ldaphound-cli snapshot.dat --type user --type computer
+//!   ldaphound-cli snapshot.dat --filter '(objectClass=computer)'
+//!   ldaphound-cli snapshot.dat --filter '(&(objectCategory=Person)(objectClass=User))'
+//!   ldaphound-cli snapshot.dat --filter '(sAMAccountName=j*)'
+//!   ldaphound-cli snapshot.dat --type user --filter '(sAMAccountName=a*)'
+//!
+//! `--type` and `--filter` combine with AND. `--filter` accepts an LDAP
+//! search filter (RFC 4515 §3 subset): `(&...)`, `(|...)`, `(!...)`,
+//! `(attr=value)`, `(attr>=value)`, `(attr<=value)`, `(attr~=value)`,
+//! `(attr=*)`, and `(attr=pre*mid*suf)` substring patterns.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use ldaphound_core::filter::{Filter, ObjectType};
+use ldaphound_core::filter::{Filter, LdapFilter, ObjectType};
 use ldaphound_core::{dump, filter, Snapshot};
 
 #[derive(Parser, Debug)]
@@ -39,11 +47,15 @@ struct Cli {
 
     /// Filter objects by LDAP type. Repeatable to OR multiple types.
     /// Accepted values: user, group, computer, domain, ou, container, gpo, other.
+    /// AND-combined with --filter.
     #[arg(long, value_name = "TYPE", value_parser = parse_object_type)]
     r#type: Vec<ObjectType>,
 
-    /// Case-insensitive substring filter on DN / display name.
-    #[arg(long, value_name = "SUBSTR")]
+    /// LDAP search filter (RFC 4515 subset). Wrap in quotes on the shell.
+    /// Examples: '(objectClass=computer)',
+    /// '(&(objectCategory=Person)(objectClass=User))', '(sAMAccountName=j*)'.
+    /// AND-combined with --type.
+    #[arg(long, value_name = "FILTER")]
     filter: Option<String>,
 }
 
@@ -87,29 +99,43 @@ fn run(cli: &Cli) -> ldaphound_core::ParseErrorResult<()> {
         return Ok(());
     }
 
-    // Build the composed filter from --type (OR list) and --filter (substring).
-    let mut f = Filter::new();
+    // --type → coarse type allow-list (OR across repeats).
+    let mut type_filter = Filter::new();
     for t in &cli.r#type {
-        f = f.with_type(*t);
+        type_filter = type_filter.with_type(*t);
     }
-    if let Some(s) = &cli.filter {
-        f = f.with_name_contains(s);
-    }
-    if !f.is_empty() {
-        let type_names: Vec<&str> = cli.r#type.iter().map(|t| t.as_str()).collect();
-        eprintln!(
-            "# filter: type=[{}] name_contains={:?}",
-            type_names.join(","),
-            cli.filter.as_deref().unwrap_or(""),
-        );
+
+    // --filter → LDAP search filter AST.
+    let ldap = match cli.filter.as_deref() {
+        Some(expr) => match LdapFilter::parse(expr) {
+            Ok(f) => {
+                eprintln!("# ldap filter: {expr}");
+                Some(f)
+            }
+            Err(e) => {
+                eprintln!("error: invalid --filter '{expr}': {e}");
+                return Ok(());
+            }
+        },
+        None => None,
+    };
+    if !type_filter.is_empty() {
+        let names: Vec<&str> = cli.r#type.iter().map(|t| t.as_str()).collect();
+        eprintln!("# type filter: [{}]", names.join(","));
     }
 
     let mut emitted = 0usize;
     let mut skipped = 0usize;
     for obj in &snap.objects {
-        if !f.matches(obj) {
+        if !type_filter.matches(obj) {
             skipped += 1;
             continue;
+        }
+        if let Some(f) = &ldap {
+            if !f.matches(obj) {
+                skipped += 1;
+                continue;
+            }
         }
         dump::dump_object_ldap(obj, &mut out).map_err(ldaphound_core::ParseError::Io)?;
         emitted += 1;
