@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use iced::Task;
-use iced::widget::{button, column, container, row, scrollable, text};
+use iced::widget::{button, column, container, row, text};
 use iced::{Alignment, Element, Length};
 
 use ldaphound_core::{Snapshot, Tree};
@@ -142,7 +142,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
                     .center(Length::Fill)
                     .into(),
             };
-            row![left, right].spacing(4).height(Length::Fill).into()
+            row![left, right]
+                .spacing(4)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
         }
         _ => container(text("No snapshot loaded."))
             .center(Length::Fill)
@@ -150,8 +154,11 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .into(),
     };
 
-    let content = column![header, body].spacing(8);
-    container(scrollable(content))
+    // NOTE: no outer scrollable — sidebar/main each carry their own inner
+    // scrollable. An outer scrollable gives body Length::Fill no reference
+    // height, collapsing both panes to zero.
+    let content = column![header, body].spacing(8).height(Length::Fill);
+    container(content)
         .padding(12)
         .width(Length::Fill)
         .height(Length::Fill)

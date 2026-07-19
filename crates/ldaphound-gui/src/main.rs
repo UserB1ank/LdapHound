@@ -6,6 +6,10 @@
 //! Parsing runs on a background thread via `Task::perform` so the UI stays
 //! responsive on large snapshots. See `docs/snapshot-format.md` §11.
 
+// Hide the console window on Windows in release builds. Kept visible in
+// debug so panic backtraces and eprintln! show up during development.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod message;
 mod task;
