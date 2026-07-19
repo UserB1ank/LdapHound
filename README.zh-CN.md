@@ -5,6 +5,8 @@
 > 深度解析 Active Directory **安全描述符（Security Descriptor）** 的离线工具——
 > 直接读取 ADExplorer `.dat` 快照，无需连接域控。同时提供 GUI 与 CLI。
 
+![1](docs\1.png)
+
 ## 项目作用
 
 LdapHound 读取 Sysinternals ADExplorer 导出的 `.dat` 二进制快照，完整重建
