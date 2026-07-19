@@ -2,52 +2,60 @@
 
 **English** | [简体中文](./README.zh-CN.md)
 
-> Offline inspector for ADExplorer `.dat` snapshots — parse, browse, and audit
-> Active Directory ACL relationships without ever touching a domain controller.
+> Deep-dive parser for Active Directory **Security Descriptors** — read
+> ADExplorer `.dat` snapshots offline, no domain controller required.
+> Ships with both a GUI and a CLI.
 
-## Overview
+## What it does
 
-LdapHound parses the binary `.dat` snapshots exported by Sysinternals
-ADExplorer directly, rebuilds the AD directory tree (Domain / Configuration /
-Schema naming contexts), and exposes each object's attributes and ACL
-(DACL/ACE). Everything runs locally — no domain controller connection is
-required. Use cases:
+LdapHound reads the binary `.dat` snapshots exported by Sysinternals
+ADExplorer and reconstructs each object's **nTSecurityDescriptor** in full
+detail: owner/group SIDs, control flags, DACL/SACL, and every ACE. The
+Security Descriptor is the core of AD access control — LdapHound turns the
+raw self-relative binary blob into a human-readable, auditable structure.
 
-- Auditing decommissioned AD snapshots after the fact
-- AD data review during red-team exercises / CTFs
-- Offline supplementation of BloodHound data
-- Reverse-engineering research of the ADExplorer snapshot format
+- Decodes every common ACE type: `ACCESS_ALLOWED`, `ACCESS_DENIED`,
+  `ACCESS_ALLOWED_OBJECT`, `ACCESS_DENIED_OBJECT`, plus the raw
+  `SYSTEM_AUDIT` family
+- Unpacks the AccessMask bitfield (GenericAll / WriteDACL / WriteOwner /
+  ExtendedRight / WriteProperty / ...) and maps extended-right GUIDs to
+  names — DCSync, WriteMember, WriteSPN, UserForceChangePassword,
+  WriteAllowedToAct (RBCD), Enroll, etc.
+- Resolves ACE trustee SIDs back to the snapshot object's
+  `sAMAccountName` / display name so permissions read as
+  "Administrators [group]" rather than a bare SID
+- Surfaces inherited-vs-explicit and DACL-protected flags at a glance
 
-## Features
+Beyond SD parsing, LdapHound also reconstructs the directory tree
+(Domain / Configuration / Schema naming contexts), decodes the common
+`ads_type` attributes (String / Integer / OctetString / SID / GUID /
+UTCTime), and supports RFC 4515 LDAP search filters
+(`(&(objectCategory=Person)(objectClass=User))`, `(sAMAccountName=j*)`).
 
-### Parser library (`ldaphound-core`)
-
-- Full ADExplorer `.dat` format parse (Header / Properties / Objects / Classes)
-- Decodes every common `ads_type`: String / Integer / LargeInteger /
-  OctetString / Boolean / UTCTime / NT_SECURITY_DESCRIPTOR
-- SID parsing (note: `IdentifierAuthority` is big-endian) and GUID
-  (mixed-endian)
-- Full SecurityDescriptor / ACL / ACE decode, covering
-  `ACCESS_ALLOWED` / `ACCESS_DENIED` / `ACCESS_ALLOWED_OBJECT` /
-  `ACCESS_DENIED_OBJECT` ACE types
-- AccessMask bitmask decode + extended-right GUID mapping (auto-recognises
-  high-value rights like DCSync / WriteMember / WriteSPN / RBCD)
-- Directory tree construction: parent/child derived from DN, three NC
-  roots auto-detected by class
-- LDAP search filter (RFC 4515 subset): `(&...)`, `(|...)`, `(!...)`,
-  `(attr=value)`, `(attr>=value)`, `(attr=pre*fix)`, `(attr=*)`
-  - `objectCategory` friendly matching: DN form
-    (`CN=Person,CN=Schema,...`) and bare CN (`Person`) are equivalent
-- Memory-mapped + background-thread parsing keeps the UI responsive on
-  4GB+ snapshots
-
-### Command line (`ldaphound-cli`)
+## Usage — GUI
 
 ```bash
-# List all objects (ldapsearch-style)
+cargo run --release -p ldaphound-gui
+```
+
+- Top menu bar: **Open .dat**
+- Left sidebar: recursive tree over the three naming contexts, with
+  expand/collapse, substring filter, per-type icons
+- Main pane: object TitleBar (icon + name + class + DN), then two tabs
+  - **Attributes** — sorted name|value list
+  - **ACL** — each ACE rendered as its own card
+    (#/Kind/Right/Mask/Inherited/Trustee). Long values scroll horizontally;
+    in-card fields are drag-selectable + Ctrl+C-able. Selecting a card
+    surfaces a Copy button for the whole row.
+- Draggable divider between sidebar and main pane
+
+## Usage — CLI
+
+```bash
+# List every object (ldapsearch-style output)
 ldaphound-cli snapshot.dat
 
-# Inspect a single object's ACL by index / DN / SID
+# Inspect one object's full Security Descriptor + ACL breakdown
 ldaphound-cli snapshot.dat --object "CN=Administrator,CN=Users,DC=x"
 ldaphound-cli snapshot.dat --object S-1-5-21-...-519
 
@@ -61,93 +69,26 @@ ldaphound-cli snapshot.dat --filter '(sAMAccountName=j*)'
 
 Output is ldapsearch-style (`dn:` + `attribute: value`), pipe-friendly.
 
-### GUI (`ldaphound-gui`)
-
-Built on iced 0.14 + iced_aw, layout inspired by the halloy IRC client:
-
-- **Top menu bar**: Open .dat button + status line
-- **Left sidebar**: recursive tree over the three naming contexts with
-  expand/collapse, substring filter on DN/name, and per-type icons
-  (user, computer, container, ...)
-- **Draggable divider**: pane_grid splitter between sidebar and main pane
-- **Main pane TitleBar**: object icon + name + class + DN
-- **Attributes / ACL tabs**:
-  - Attributes: sorted alphabetically by name
-  - ACL: each ACE rendered as its own card
-    (#/Kind/Right/Mask/Inherited/Trustee); long values scroll horizontally,
-    in-card fields are drag-selectable + Ctrl+C-able
-- **ACL trustee resolution**: SIDs are reverse-looked-up to the object's
-  `sAMAccountName` (or principal/display name)
-- Bundled Bootstrap Icons font, dark theme
-
-## Project layout
-
-```
-LdapHound/
-├── crates/
-│   ├── ldaphound-core/        # parser library (no GUI deps, independently testable)
-│   │   └── src/
-│   │       ├── snapshot/      # dat parsing (Header/Property/Object/Attribute)
-│   │       ├── security/      # SD/ACL/ACE/AccessMask/ObjectTypeGUID
-│   │       ├── filter.rs      # LDAP search filter parse + evaluation
-│   │       ├── tree.rs        # directory tree construction
-│   │       ├── dump.rs        # ldapsearch-style output
-│   │       ├── sid.rs / guid.rs
-│   │       └── bin/cli.rs     # CLI entry
-│   └── ldaphound-gui/         # iced GUI
-│       └── src/
-│           ├── app.rs         # state + Elm update/view
-│           ├── view/          # sidebar + object_view
-│           ├── theme.rs       # palette + button/container styles
-│           └── icon.rs        # Bootstrap Icons glyphs
-├── docs/
-│   └── snapshot-format.md     # .dat format spec (calibrated against real data)
-└── Cargo.toml                 # workspace
-```
-
-## Building
+## Build & test
 
 Requires Rust 1.85+ (edition 2024).
 
 ```bash
-# Build everything
 cargo build --release
-
-# Run the GUI
-cargo run --release -p ldaphound-gui
-
-# Run the CLI
-cargo run --release -p ldaphound-core --bin ldaphound-cli -- snapshot.dat
+cargo test  -p ldaphound-core --lib
 ```
-
-## Tests
-
-```bash
-cargo test -p ldaphound-core --lib
-```
-
-Coverage: SID/GUID byte parsing, Header field offsets, LDAP filter parse +
-evaluation (including `objectCategory` DN-vs-CN matching), directory tree
-construction.
 
 ## Background
 
-The ADExplorer `.dat` format is a Microsoft proprietary binary format with
-no official documentation. The format knowledge in this project derives
-from the reverse engineering done by
+The ADExplorer `.dat` format is undocumented and proprietary. Format
+knowledge derives from the reverse engineering in
 [`ADExplorerSnapshot.py`](https://github.com/c3c/ADExplorerSnapshot.py)
-(MIT licensed, by c3c), cross-referenced with the public
-[MS-DTYP](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-dtyp/)
-specification. The parser is a clean-room implementation that does not
-incorporate code from either source.
-
-For the full format specification with field-offset tables and calibration
-data verified against real snapshots, see
-[`docs/snapshot-format.md`](./docs/snapshot-format.md).
+(MIT, by c3c), cross-referenced with
+[MS-DTYP](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-dtyp/).
+The parser is a clean-room implementation and does not incorporate code
+from either source. Full format spec with field-offset tables and
+calibration data: [`docs/snapshot-format.md`](./docs/snapshot-format.md).
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
-
-The Bootstrap Icons font (`assets/bootstrap-icons.ttf`) is used under its
-own MIT license.
+MIT. The bundled Bootstrap Icons font retains its own MIT license.
