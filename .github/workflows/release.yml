@@ -1,0 +1,163 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name (e.g. v0.1.0). Required to attach artifacts to a release."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fat LTO + symbol stripping for smaller release binaries.
+  CARGO_PROFILE_RELEASE_LTO: fat
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            artifact_prefix: windows-x86_64
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            archive: tarball
+            artifact_prefix: linux-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tarball
+            artifact_prefix: macos-aarch64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive: tarball
+            artifact_prefix: macos-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux GUI dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            libudev-dev \
+            libinput-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libatk1.0-dev \
+            libatk-bridge2.0-dev \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libpango1.0-dev \
+            libcairo2-dev \
+            libgles2-mesa-dev \
+            libegl1-mesa-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libasound2-dev
+
+      - name: Build CLI
+        run: cargo build --release --target ${{ matrix.target }} -p ldaphound-core --bin ldaphound-cli
+
+      - name: Build GUI
+        run: cargo build --release --target ${{ matrix.target }} -p ldaphound-gui
+
+      - name: Stage artifacts (Unix)
+        if: matrix.archive == 'tarball'
+        run: |
+          set -eux
+          stage="ldaphound-${{ matrix.artifact_prefix }}"
+          mkdir -p "$stage"
+          cp target/${{ matrix.target }}/release/ldaphound-cli "$stage/"
+          cp target/${{ matrix.target }}/release/ldaphound-gui "$stage/"
+          cp README.md README.zh-CN.md LICENSE "$stage/" || true
+          cp -r docs "$stage/" || true
+          tar czf "$stage.tar.gz" "$stage"
+          sha256sum "$stage.tar.gz" > "$stage.tar.gz.sha256"
+
+      - name: Stage artifacts (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $stage = "ldaphound-${{ matrix.artifact_prefix }}"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/ldaphound-cli.exe "$stage/"
+          Copy-Item target/${{ matrix.target }}/release/ldaphound-gui.exe "$stage/"
+          Copy-Item README.md "$stage/" -ErrorAction SilentlyContinue
+          Copy-Item README.zh-CN.md "$stage/" -ErrorAction SilentlyContinue
+          Copy-Item LICENSE "$stage/" -ErrorAction SilentlyContinue
+          Copy-Item docs "$stage/docs" -Recurse -ErrorAction SilentlyContinue
+          Compress-Archive -Path "$stage" -DestinationPath "$stage.zip"
+          $hash = (Get-FileHash "$stage.zip" -Algorithm SHA256).Hash
+          "$hash  $stage.zip" | Out-File -Encoding ascii "$stage.zip.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ldaphound-${{ matrix.artifact_prefix }}
+          path: |
+            ldaphound-*.tar.gz
+            ldaphound-*.tar.gz.sha256
+            ldaphound-*.zip
+            ldaphound-*.zip.sha256
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only publish a release when triggered by a tag push or a manual run
+    # with a tag input. Manual runs without a tag just build + collect
+    # artifacts.
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lR artifacts
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "name=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          files: |
+            artifacts/ldaphound-*.tar.gz
+            artifacts/ldaphound-*.tar.gz.sha256
+            artifacts/ldaphound-*.zip
+            artifacts/ldaphound-*.zip.sha256
