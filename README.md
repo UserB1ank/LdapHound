@@ -6,7 +6,7 @@
 > ADExplorer `.dat` snapshots offline, no domain controller required.
 > Ships with both a GUI and a CLI.
 
-![1](docs\1.png)
+![1](docs/1.png)
 
 ## What it does
 
