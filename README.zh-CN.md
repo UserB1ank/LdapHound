@@ -1,6 +1,6 @@
 # LdapHound
 
-[English](./README.en.md) | **简体中文**
+[English](README.md) | **简体中文**
 
 > ADExplorer `.dat` 快照的离线分析工具——解析、浏览、审计 Active Directory 的
 > ACL 关系，全程不接触域控。
