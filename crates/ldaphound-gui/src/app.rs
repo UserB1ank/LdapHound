@@ -12,7 +12,7 @@ use std::collections::HashSet;
 
 use iced::Task;
 use iced::widget::pane_grid::{self, PaneGrid};
-use iced::widget::{column, container, row, text};
+use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length};
 
 use ldaphound_core::{Snapshot, Tree};
@@ -177,26 +177,44 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
+    // Top menu bar: Open .dat button + status text, pinned above everything.
+    let open_btn = button(
+        row![
+            crate::icon::folder(),
+            iced::widget::text("Open .dat").size(13),
+        ]
+        .spacing(6)
+        .align_y(iced::alignment::Vertical::Center),
+    )
+    .on_press_maybe(if app.parsing {
+        None
+    } else {
+        Some(Message::OpenFileClicked)
+    })
+    .padding([4, 10])
+    .style(|t, s| crate::theme::primary(t, s));
+
+    let menu_bar = container(
+        row![
+            open_btn,
+            iced::widget::text(app.status.clone())
+                .size(12)
+                .color(crate::theme::dim_text()),
+        ]
+        .spacing(12)
+        .align_y(iced::alignment::Vertical::Center),
+    )
+    .padding([4, 8])
+    .width(Length::Fill)
+    .style(|t| crate::theme::pane_title_bar(t));
+
     let body: Element<'_, Message> = match (&app.snapshot, &app.tree) {
         (Some(snap), Some(tree)) => {
-            let sidebar_el = sidebar::view(
-                snap,
-                tree,
-                &app.expanded,
-                app.selected,
-                &app.filter,
-                app.parsing,
-            );
-
             let expanded = &app.expanded;
             let selected = app.selected;
             let selected_ace = app.selected_ace;
             let active_tab = app.active_tab;
 
-            // PaneGrid holds only the Main pane; the Sidebar lives outside
-            // it (halloy puts the sidebar in the wrapping Row and PaneGrid
-            // holds the buffer panes). That keeps the sidebar width fixed
-            // while only the main content is user-resizable internally.
             let pane_grid: Element<'_, Message> = PaneGrid::new(&app.panes, move |_id, pane, _m| {
                 let element: iced::Element<'_, Message> = match pane {
                     Pane::Sidebar => sidebar::view(
@@ -217,16 +235,28 @@ pub fn view(app: &App) -> Element<'_, Message> {
             .height(Length::Fill)
             .into();
 
-            row![sidebar_el, container(pane_grid).padding(8)]
-                .spacing(0)
+            container(pane_grid)
+                .padding(8)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
         }
-        _ => sidebar::placeholder(app.parsing, &app.status),
+        _ => container(
+                iced::widget::text("Open a .dat snapshot to begin.")
+                    .color(crate::theme::dim_text()),
+            )
+            .center(Length::Fill)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
     };
 
-    container(body)
+    let content = iced::widget::column![menu_bar, body]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .spacing(0);
+
+    container(content)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()

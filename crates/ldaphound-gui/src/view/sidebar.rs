@@ -1,9 +1,9 @@
 //! Sidebar — recursive tree view of AD naming contexts.
 //!
 //! Layout (halloy-style):
-//! - Top: filter text_input (with search icon)
-//! - Middle: scrollable recursive tree of NC roots
-//! - Bottom: "Open .dat" button (like halloy's user menu)
+//! - Top: "Open .dat" button (like halloy's user menu)
+//! - Middle: filter text_input (with search icon)
+//! - Bottom: scrollable recursive tree of NC roots
 //!
 //! Tree rows are flat buttons in a scrollable column; visual hierarchy comes
 //! from indentation by tree depth. Recursive DFS over [`Tree`].
@@ -30,6 +30,7 @@ pub fn view<'a>(
     filter: &'a str,
     parsing: bool,
 ) -> Element<'a, Message> {
+    let _ = parsing; // Open button moved to the top menu bar; signature kept stable.
     // Filter input at top.
     let search_box = row![
         icon::search(),
@@ -54,24 +55,9 @@ pub fn view<'a>(
 
     let scroll = scrollable(tree_col).width(Length::Fill);
 
-    // Open .dat button pinned at bottom (halloy's user_menu position).
-    let open_btn = button(row![
-        icon::folder(),
-        text("Open .dat").size(14),
-    ]
-    .spacing(8)
-    .align_y(alignment::Vertical::Center))
-    .on_press_maybe(if parsing {
-        None
-    } else {
-        Some(Message::OpenFileClicked)
-    })
-    .padding(6)
-    .width(Length::Fill)
-    .style(|t, s| crate::theme::primary(t, s));
-
-    // Compose: search | (scroll tree) | open button.
-    let body = column![container(search_box).padding(6), scroll, container(open_btn).padding(6)]
+    // Compose: search on top, tree fills the rest. Open .dat lives in the
+    // top menu bar now (see app::view).
+    let body = column![container(search_box).padding(6), scroll]
         .spacing(4)
         .height(Length::Fill);
 
@@ -203,34 +189,7 @@ fn row_label_synthetic(depth: usize, label: &str) -> Element<'_, Message> {
     .into()
 }
 
-/// Sidebar shown when no snapshot is loaded — still offers the Open button.
-pub fn placeholder<'a>(parsing: bool, status: &str) -> Element<'a, Message> {
-    let open_btn = button(
-        row![icon::folder(), text("Open .dat").size(14)]
-            .spacing(8)
-            .align_y(alignment::Vertical::Center),
-    )
-    .on_press_maybe(if parsing {
-        None
-    } else {
-        Some(Message::OpenFileClicked)
-    })
-    .padding(6)
-    .width(Length::Fill)
-    .style(|t, s| crate::theme::primary(t, s));
-
-    let body = column![
-        container(text(status.to_string()).color(crate::theme::dim_text()))
-            .padding(6),
-        column![].height(Length::Fill),
-        container(open_btn).padding(6),
-    ]
-    .spacing(4)
-    .height(Length::Fill);
-
-    container(body)
-        .width(Length::Shrink)
-        .height(Length::Fill)
-        .style(|t| crate::theme::sidebar_background(t))
-        .into()
-}
+// The "no snapshot loaded" placeholder used to live here; the top menu
+// bar (see app::view) now owns the Open .dat button, so the placeholder
+// is no longer needed — app::view renders a centered status line directly
+// when no snapshot is loaded.
