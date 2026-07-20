@@ -46,6 +46,11 @@ pub struct App {
     active_tab: usize,
     /// Sidebar filter text (substring on DN / display name).
     filter: String,
+    /// ACL tab: optional active trustee filter (matches AceLine.trustee
+    /// verbatim). None = show all.
+    acl_filter_trustee: Option<String>,
+    /// ACL tab: optional active right filter (matches AceLine.right).
+    acl_filter_right: Option<String>,
     /// Cached ACL display data for the currently-selected object. Rebuilt
     /// whenever the selection changes; borrowed by `view_acl` so it can
     /// hand `&str` to read-only `text_input` widgets (selectable text).
@@ -78,6 +83,8 @@ pub fn new() -> App {
         selected_ace: None,
         active_tab: 0,
         filter: String::new(),
+        acl_filter_trustee: None,
+        acl_filter_right: None,
         acl_cache: crate::view::object_view::AclCache::default(),
         attr_cache: crate::view::object_view::AttrCache::default(),
         status: "Open a .dat snapshot to begin.".into(),
@@ -135,6 +142,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.expanded = HashSet::new();
                     app.selected = None;
                     app.selected_ace = None;
+                    app.acl_filter_trustee = None;
+                    app.acl_filter_right = None;
                     app.acl_cache = crate::view::object_view::AclCache::default();
                     app.attr_cache = crate::view::object_view::AttrCache::default();
                     app.filter.clear();
@@ -155,6 +164,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::SelectNode(i) => {
             app.selected = Some(i);
             app.selected_ace = None;
+            app.acl_filter_trustee = None;
+            app.acl_filter_right = None;
             // Rebuild both caches for the newly-selected object so the view
             // can borrow stable &str values for selectable text_input rows.
             if let Some(snap) = app.snapshot.as_ref() {
@@ -225,6 +236,24 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             }
             Task::none()
         }
+        Message::ToggleAclTrusteeFilter(s) => {
+            app.acl_filter_trustee = if app.acl_filter_trustee.as_deref() == Some(s.as_str()) {
+                None
+            } else {
+                Some(s)
+            };
+            app.selected_ace = None;
+            Task::none()
+        }
+        Message::ToggleAclRightFilter(s) => {
+            app.acl_filter_right = if app.acl_filter_right.as_deref() == Some(s.as_str()) {
+                None
+            } else {
+                Some(s)
+            };
+            app.selected_ace = None;
+            Task::none()
+        }
     }
 }
 
@@ -272,6 +301,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
             // nothing is selected (main_pane bails on selected=None first).
             let acl_cache: &crate::view::object_view::AclCache = &app.acl_cache;
             let attr_cache: &crate::view::object_view::AttrCache = &app.attr_cache;
+            let acl_filter_trustee = &app.acl_filter_trustee;
+            let acl_filter_right = &app.acl_filter_right;
 
             let pane_grid: Element<'_, Message> = PaneGrid::new(&app.panes, move |_id, pane, _m| {
                 let element: iced::Element<'_, Message> = match pane {
@@ -290,6 +321,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
                         snap,
                         attr_cache,
                         acl_cache,
+                        acl_filter_trustee,
+                        acl_filter_right,
                     ),
                 };
                 pane_grid::Content::new(element)
@@ -336,6 +369,8 @@ fn main_pane<'a>(
     snap: &'a Snapshot,
     attr_cache: &'a crate::view::object_view::AttrCache,
     acl_cache: &'a crate::view::object_view::AclCache,
+    acl_filter_trustee: &'a Option<String>,
+    acl_filter_right: &'a Option<String>,
 ) -> Element<'a, Message> {
     let Some(idx) = selected else {
         return container(text("Select an object in the tree."))
@@ -374,7 +409,16 @@ fn main_pane<'a>(
     .width(Length::Fill)
     .style(|t| crate::theme::pane_title_bar(t));
 
-    let body = object_view::view(obj, snap, selected_ace, active_tab, attr_cache, acl_cache);
+    let body = object_view::view(
+        obj,
+        snap,
+        selected_ace,
+        active_tab,
+        attr_cache,
+        acl_cache,
+        acl_filter_trustee.as_deref(),
+        acl_filter_right.as_deref(),
+    );
 
     column![title_bar, body]
         .width(Length::Fill)

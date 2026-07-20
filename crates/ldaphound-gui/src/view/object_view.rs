@@ -24,6 +24,8 @@ pub fn view<'a>(
     active_tab: usize,
     attr_cache: &'a AttrCache,
     acl_cache: &'a AclCache,
+    acl_filter_trustee: Option<&'a str>,
+    acl_filter_right: Option<&'a str>,
 ) -> Element<'a, Message> {
     let sid_line = obj
         .object_sid()
@@ -39,7 +41,14 @@ pub fn view<'a>(
         .push(
             TAB_ACL,
             TabLabel::Text("ACL".into()),
-            view_acl(obj, snap, selected_ace, acl_cache),
+            view_acl(
+                obj,
+                snap,
+                selected_ace,
+                acl_cache,
+                acl_filter_trustee,
+                acl_filter_right,
+            ),
         )
         .set_active_tab(&active_tab)
         .height(Length::Fill);
@@ -78,6 +87,8 @@ fn view_acl<'a>(
     snap: &'a Snapshot,
     selected_ace: Option<usize>,
     acl: &'a AclCache,
+    filter_trustee: Option<&'a str>,
+    filter_right: Option<&'a str>,
 ) -> Element<'a, Message> {
     let _ = obj; // acl cache already encodes everything we need.
     let _ = snap;
@@ -85,12 +96,66 @@ fn view_acl<'a>(
         return text(err.clone()).into();
     }
 
+    // Count by trustee + right for the categorisation bar.
+    use std::collections::BTreeMap;
+    let mut by_trustee: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut by_right: BTreeMap<&str, usize> = BTreeMap::new();
+    for ace in acl.aces.iter() {
+        *by_trustee.entry(ace.trustee.as_str()).or_insert(0) += 1;
+        *by_right.entry(ace.right.as_str()).or_insert(0) += 1;
+    }
+
     let mut children: Vec<Element<'a, Message>> = Vec::new();
     children.push(text(acl.header.clone()).into());
     children.push(text(format!("owner: {}", acl.owner)).into());
-    children.push(text(format!("DACL ({} ACEs):", acl.aces.len())).into());
 
-    for ace in acl.aces.iter() {
+    // Categorisation bar: trustee chips + right chips. Clicking a chip
+    // toggles the corresponding filter; the chip is highlighted when the
+    // filter is active.
+    let mut trustee_chips: Vec<Element<'static, Message>> = Vec::new();
+    trustee_chips.push(text("Trustee:").size(13).into());
+    for (name, count) in &by_trustee {
+        let label = format!("{name} ({count})");
+        let active = filter_trustee == Some(*name);
+        let msg = Message::ToggleAclTrusteeFilter((*name).to_string());
+        trustee_chips.push(chip(label, active, msg));
+    }
+    children.push(wrap_row(trustee_chips) as Element<'a, Message>);
+
+    let mut right_chips: Vec<Element<'static, Message>> = Vec::new();
+    right_chips.push(text("Right:").size(13).into());
+    for (name, count) in &by_right {
+        let label = format!("{name} ({count})");
+        let active = filter_right == Some(*name);
+        let msg = Message::ToggleAclRightFilter((*name).to_string());
+        right_chips.push(chip(label, active, msg));
+    }
+    children.push(wrap_row(right_chips) as Element<'a, Message>);
+
+    // Apply filters + render matching ACEs.
+    let visible: Vec<&AceLine> = acl
+        .aces
+        .iter()
+        .filter(|ace| {
+            if let Some(t) = filter_trustee {
+                if ace.trustee.as_str() != t {
+                    return false;
+                }
+            }
+            if let Some(r) = filter_right {
+                if ace.right.as_str() != r {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
+    children.push(
+        text(format!("DACL ({} of {} ACEs):", visible.len(), acl.aces.len()))
+            .into(),
+    );
+
+    for ace in visible.iter() {
         let i = ace.idx;
         let is_sel = selected_ace == Some(i);
         let row_text = format_ace_row(i, ace);
@@ -159,6 +224,30 @@ fn view_acl<'a>(
 /// can drag-select substrings and Ctrl+C them. `value` is borrowed for the
 /// returned element's lifetime — the caller must keep it alive (e.g. in an
 /// `AclCache` stored on App state, or a sorted attribute vec).
+/// A small clickable chip used in the ACL categorisation bar. Renders the
+/// label (e.g. "Administrators (5)") and toggles a filter on click.
+fn chip(label: String, active: bool, msg: Message) -> Element<'static, Message> {
+    button(text(label).size(13))
+        .on_press(msg)
+        .padding([6, 10])
+        .height(Length::Fixed(28.0))
+        .style(move |t, s| crate::theme::sidebar_buffer(t, s, active))
+        .into()
+}
+
+/// Wrap a list of chips into a horizontally scrollable row. iced has no
+/// native wrap layout, so users scroll right to see more chips. Each chip
+/// has a fixed 28px height so the bar is comfortably clickable.
+fn wrap_row(chips: Vec<Element<'static, Message>>) -> Element<'static, Message> {
+    let scroll = iced::widget::scrollable(
+        iced::widget::row(chips).spacing(6).padding([4, 4]),
+    )
+    .direction(iced::widget::scrollable::Direction::Horizontal(
+        iced::widget::scrollable::Scrollbar::default(),
+    ));
+    scroll.into()
+}
+
 fn name_value_row<'a>(name: &'a str, value: &'a str) -> Element<'a, Message> {
     use iced::widget::text_input;
     let name_el: iced::widget::Text<'a, iced::Theme, iced::Renderer> =

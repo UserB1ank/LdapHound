@@ -36,5 +36,10 @@ pub enum Message {
     /// Jump to the object whose SID matches (right-click "Go to trustee"
     /// on an ACE card). Expands ancestors so the target is visible.
     SelectBySid(Sid),
+
+    /// Toggle a trustee filter on the ACL tab. Empty string clears it.
+    ToggleAclTrusteeFilter(String),
+    /// Toggle a right filter on the ACL tab. Empty string clears it.
+    ToggleAclRightFilter(String),
 }
 
