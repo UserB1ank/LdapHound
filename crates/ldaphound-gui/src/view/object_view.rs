@@ -22,6 +22,7 @@ pub fn view<'a>(
     snap: &'a Snapshot,
     selected_ace: Option<usize>,
     active_tab: usize,
+    attr_cache: &'a AttrCache,
     acl_cache: &'a AclCache,
 ) -> Element<'a, Message> {
     let sid_line = obj
@@ -33,7 +34,7 @@ pub fn view<'a>(
         .push(
             TAB_ATTRIBUTES,
             TabLabel::Text("Attributes".into()),
-            view_attributes(obj),
+            view_attributes(attr_cache),
         )
         .push(
             TAB_ACL,
@@ -61,26 +62,10 @@ pub fn view<'a>(
         .into()
 }
 
-fn view_attributes(obj: &Object) -> Element<'static, Message> {
-    // Sort a snapshot of (name, owned value) pairs and render each row with
-    // plain Text widgets (so the rows are 'static and don't tangle with the
-    // caller's borrow). ACL rows get selectable text_input; attributes stay
-    // non-selectable for now — use the per-ACE Copy button on the ACL tab
-    // when you need to copy.
-    let mut attrs: Vec<(String, String)> = obj
-        .attributes
-        .iter()
-        .map(|(k, a)| (k.clone(), format_attr_values(&a.values)))
-        .collect();
-    attrs.sort_by(|a, b| a.0.cmp(&b.0));
-
-    let mut rows: Vec<Element<'static, Message>> = Vec::new();
-    for (name, value) in &attrs {
-        let name_el: iced::widget::Text<'static, iced::Theme, iced::Renderer> =
-            text(name.clone()).width(Length::FillPortion(2));
-        let value_el: iced::widget::Text<'static, iced::Theme, iced::Renderer> =
-            text(value.clone()).width(Length::FillPortion(5));
-        rows.push(row![name_el, value_el].spacing(4).into());
+fn view_attributes<'a>(attr_cache: &'a AttrCache) -> Element<'a, Message> {
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+    for (name, value) in attr_cache.pairs.iter() {
+        rows.push(name_value_row(name, value));
     }
     if rows.is_empty() {
         rows.push(text("(no attributes)").into());
@@ -224,6 +209,30 @@ impl Default for AclCache {
             error: None,
         }
     }
+}
+
+/// Cached, sorted (name, value) pairs for the Attributes tab. Borrowed by
+/// `view_attributes` so the rows can hand `&str` to read-only `text_input`
+/// widgets (selectable text). Stored on the App next to AclCache.
+pub struct AttrCache {
+    pub pairs: Vec<(String, String)>,
+}
+
+impl Default for AttrCache {
+    fn default() -> Self {
+        Self { pairs: Vec::new() }
+    }
+}
+
+/// Build the attribute display data once per object selection.
+pub fn build_attr_cache(obj: &Object) -> AttrCache {
+    let mut pairs: Vec<(String, String)> = obj
+        .attributes
+        .iter()
+        .map(|(k, a)| (k.clone(), format_attr_values(&a.values)))
+        .collect();
+    pairs.sort_by(|a, b| a.0.cmp(&b.0));
+    AttrCache { pairs }
 }
 
 pub struct AceLine {

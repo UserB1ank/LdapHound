@@ -52,6 +52,10 @@ pub struct App {
     /// Always `Some` — defaults to an empty cache when no object is
     /// selected (main_pane bails out before reading it).
     acl_cache: crate::view::object_view::AclCache,
+    /// Same pattern as acl_cache but for the Attributes tab — pre-built
+    /// (name, value) pairs borrowed by view_attributes so the value field
+    /// can be a selectable text_input.
+    attr_cache: crate::view::object_view::AttrCache,
 
     status: String,
     parsing: bool,
@@ -75,6 +79,7 @@ pub fn new() -> App {
         active_tab: 0,
         filter: String::new(),
         acl_cache: crate::view::object_view::AclCache::default(),
+        attr_cache: crate::view::object_view::AttrCache::default(),
         status: "Open a .dat snapshot to begin.".into(),
         parsing: false,
     }
@@ -131,6 +136,7 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.selected = None;
                     app.selected_ace = None;
                     app.acl_cache = crate::view::object_view::AclCache::default();
+                    app.attr_cache = crate::view::object_view::AttrCache::default();
                     app.filter.clear();
                     app.snapshot = Some(snap);
                 }
@@ -149,11 +155,12 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::SelectNode(i) => {
             app.selected = Some(i);
             app.selected_ace = None;
-            // Rebuild ACL cache for the newly-selected object so the view
+            // Rebuild both caches for the newly-selected object so the view
             // can borrow stable &str values for selectable text_input rows.
             if let Some(snap) = app.snapshot.as_ref() {
                 if let Some(o) = snap.objects.get(i) {
                     app.acl_cache = crate::view::object_view::build_acl_cache(o, snap);
+                    app.attr_cache = crate::view::object_view::build_attr_cache(o);
                 }
             }
             Task::none()
@@ -212,6 +219,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     let obj = &snap.objects[idx];
                     app.acl_cache =
                         crate::view::object_view::build_acl_cache(obj, snap);
+                    app.attr_cache =
+                        crate::view::object_view::build_attr_cache(obj);
                 }
             }
             Task::none()
@@ -259,9 +268,10 @@ pub fn view(app: &App) -> Element<'_, Message> {
             let active_tab = app.active_tab;
             let filter = &app.filter;
             let parsing = app.parsing;
-            // ACL cache: pre-built on SelectNode; defaults to empty when
+            // Caches: pre-built on SelectNode; default to empty when
             // nothing is selected (main_pane bails on selected=None first).
             let acl_cache: &crate::view::object_view::AclCache = &app.acl_cache;
+            let attr_cache: &crate::view::object_view::AttrCache = &app.attr_cache;
 
             let pane_grid: Element<'_, Message> = PaneGrid::new(&app.panes, move |_id, pane, _m| {
                 let element: iced::Element<'_, Message> = match pane {
@@ -278,6 +288,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
                         selected_ace,
                         active_tab,
                         snap,
+                        attr_cache,
                         acl_cache,
                     ),
                 };
@@ -323,6 +334,7 @@ fn main_pane<'a>(
     selected_ace: Option<usize>,
     active_tab: usize,
     snap: &'a Snapshot,
+    attr_cache: &'a crate::view::object_view::AttrCache,
     acl_cache: &'a crate::view::object_view::AclCache,
 ) -> Element<'a, Message> {
     let Some(idx) = selected else {
@@ -362,7 +374,7 @@ fn main_pane<'a>(
     .width(Length::Fill)
     .style(|t| crate::theme::pane_title_bar(t));
 
-    let body = object_view::view(obj, snap, selected_ace, active_tab, acl_cache);
+    let body = object_view::view(obj, snap, selected_ace, active_tab, attr_cache, acl_cache);
 
     column![title_bar, body]
         .width(Length::Fill)
