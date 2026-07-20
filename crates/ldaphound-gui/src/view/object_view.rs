@@ -123,7 +123,7 @@ fn view_acl<'a>(
                 row![
                     iced::widget::Space::new().width(Length::Fill),
                     button(text("Copy").size(12))
-                        .on_press(Message::CopyToClipboard(row_text))
+                        .on_press(Message::CopyToClipboard(row_text.clone()))
                         .padding([2, 6])
                         .style(|t, s| crate::theme::secondary(t, s)),
                 ]
@@ -138,7 +138,34 @@ fn view_acl<'a>(
             .width(Length::Fill)
             .style(move |t, s| crate::theme::sidebar_buffer(t, s, is_sel));
 
-        children.push(card.into());
+        // Right-click menu: Copy ACE always; Go to trustee when the ACE
+        // carries a SID. ContextMenu's overlay closure is Fn (called on
+        // every right-click), so we capture Clone-able inputs and rebuild
+        // the widget tree each invocation — Element itself isn't Clone.
+        let row_text_for_copy = row_text.clone();
+        let trustee_sid_for_goto = ace.trustee_sid.clone();
+        let card_with_menu = iced_aw::ContextMenu::new(card, move || {
+            let mut items: Vec<Element<'static, Message>> = Vec::new();
+            items.push(
+                button(text("Copy ACE").size(12))
+                    .on_press(Message::CopyToClipboard(row_text_for_copy.clone()))
+                    .padding([4, 8])
+                    .style(|t, s| crate::theme::bare(t, s))
+                    .into(),
+            );
+            if let Some(sid) = trustee_sid_for_goto.clone() {
+                items.push(
+                    button(text(format!("Go to trustee ({sid})")).size(12))
+                        .on_press(Message::SelectBySid(sid))
+                        .padding([4, 8])
+                        .style(|t, s| crate::theme::bare(t, s))
+                        .into(),
+                );
+            }
+            column(items).width(Length::Shrink).into()
+        });
+
+        children.push(card_with_menu.into());
     }
     column(children).spacing(4).into()
 }
@@ -209,6 +236,9 @@ pub struct AceLine {
     /// Pre-formatted "inherited" / "explicit".
     pub inherited_str: String,
     pub trustee: String,
+    /// Parsed SID for the trustee, if any. Drives the "Go to trustee" right-
+    /// click action.
+    pub trustee_sid: Option<ldaphound_core::Sid>,
 }
 
 /// Build ACL display data once per object selection. Stored on the App so
@@ -257,6 +287,7 @@ pub fn build_acl_cache(obj: &Object, snap: &Snapshot) -> AclCache {
                         .unwrap_or_else(|| "-".into());
                     let inherited = ace.is_inherited();
                     let inherited_str = if inherited { "inherited".into() } else { "explicit".into() };
+                    let trustee_sid = ace.trustee().cloned();
                     let trustee = match ace.trustee() {
                         Some(sid) => match find_by_sid(snap, sid) {
                             Some(o) => {
@@ -281,6 +312,7 @@ pub fn build_acl_cache(obj: &Object, snap: &Snapshot) -> AclCache {
                         inherited,
                         inherited_str,
                         trustee,
+                        trustee_sid,
                     }
                 })
                 .collect();

@@ -182,6 +182,40 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.filter = s;
             Task::none()
         }
+        Message::SelectBySid(sid) => {
+            // Find the object with this SID, select it, and expand every
+            // ancestor DN so the target is visible in the tree.
+            if let Some(snap) = app.snapshot.as_ref() {
+                let target = snap.objects.iter().position(|o| {
+                    o.object_sid().map(|s| s == sid).unwrap_or(false)
+                });
+                if let Some(idx) = target {
+                    // Expand ancestors: walk up the DN, mark each parent.
+                    if let Some(dn) = snap.objects[idx].dn() {
+                        let lower = dn.to_ascii_lowercase();
+                        let mut start = 0usize;
+                        while let Some(comma) = lower[start..].find(',') {
+                            let parent_dn = &lower[start + comma + 1..];
+                            app.expanded.insert(parent_dn.trim().to_string());
+                            start += comma + 1;
+                            // Advance to the next comma; if none, break.
+                            if lower[start..].find(',').is_none() {
+                                break;
+                            }
+                        }
+                        // Also clear the filter so the target is reachable.
+                        app.filter.clear();
+                    }
+                    // Reuse the SelectNode path (rebuild acl_cache + select).
+                    app.selected = Some(idx);
+                    app.selected_ace = None;
+                    let obj = &snap.objects[idx];
+                    app.acl_cache =
+                        crate::view::object_view::build_acl_cache(obj, snap);
+                }
+            }
+            Task::none()
+        }
     }
 }
 

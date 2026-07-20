@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use iced::widget::pane_grid;
-use ldaphound_core::Snapshot;
+use ldaphound_core::{Sid, Snapshot};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -32,5 +32,9 @@ pub enum Message {
 
     /// User typed in the sidebar filter box.
     FilterChanged(String),
+
+    /// Jump to the object whose SID matches (right-click "Go to trustee"
+    /// on an ACE card). Expands ancestors so the target is visible.
+    SelectBySid(Sid),
 }
 
