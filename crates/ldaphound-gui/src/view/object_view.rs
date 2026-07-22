@@ -109,28 +109,72 @@ fn view_acl<'a>(
     children.push(text(acl.header.clone()).into());
     children.push(text(format!("owner: {}", acl.owner)).into());
 
-    // Categorisation bar: trustee chips + right chips. Clicking a chip
-    // toggles the corresponding filter; the chip is highlighted when the
-    // filter is active.
-    let mut trustee_chips: Vec<Element<'static, Message>> = Vec::new();
-    trustee_chips.push(text("Trustee:").size(13).into());
-    for (name, count) in &by_trustee {
-        let label = format!("{name} ({count})");
-        let active = filter_trustee == Some(*name);
-        let msg = Message::ToggleAclTrusteeFilter((*name).to_string());
-        trustee_chips.push(chip(label, active, msg));
-    }
-    children.push(wrap_row(trustee_chips) as Element<'a, Message>);
+    // Single-row filter bar with two dropdowns (Trustee + Right). Options
+    // carry their count as a suffix so users see distribution at a glance;
+    // the underlying value is the bare name so filter comparison is simple.
+    use iced::widget::pick_list;
+    // Option list includes a leading "(all)" entry so users can clear the
+    // filter from the dropdown itself.
+    let mut trustee_options: Vec<String> = vec!["(all)".to_string()];
+    trustee_options.extend(
+        by_trustee
+            .iter()
+            .map(|(name, count)| format!("{name} ({count})")),
+    );
+    let trustee_selected = filter_trustee.map(|t| {
+        let count = by_trustee.get(t).copied().unwrap_or(0);
+        format!("{t} ({count})")
+    });
+    let trustee_list = pick_list(
+        trustee_options,
+        trustee_selected,
+        |pick: String| {
+            if pick == "(all)" {
+                Message::ToggleAclTrusteeFilter(String::new())
+            } else {
+                let name = pick.split(" (").next().unwrap_or(&pick).to_string();
+                Message::ToggleAclTrusteeFilter(name)
+            }
+        },
+    )
+    .placeholder("All trustees");
 
-    let mut right_chips: Vec<Element<'static, Message>> = Vec::new();
-    right_chips.push(text("Right:").size(13).into());
-    for (name, count) in &by_right {
-        let label = format!("{name} ({count})");
-        let active = filter_right == Some(*name);
-        let msg = Message::ToggleAclRightFilter((*name).to_string());
-        right_chips.push(chip(label, active, msg));
-    }
-    children.push(wrap_row(right_chips) as Element<'a, Message>);
+    let mut right_options: Vec<String> = vec!["(all)".to_string()];
+    right_options.extend(
+        by_right
+            .iter()
+            .map(|(name, count)| format!("{name} ({count})")),
+    );
+    let right_selected = filter_right.map(|r| {
+        let count = by_right.get(r).copied().unwrap_or(0);
+        format!("{r} ({count})")
+    });
+    let right_list = pick_list(
+        right_options,
+        right_selected,
+        |pick: String| {
+            if pick == "(all)" {
+                Message::ToggleAclRightFilter(String::new())
+            } else {
+                let name = pick.split(" (").next().unwrap_or(&pick).to_string();
+                Message::ToggleAclRightFilter(name)
+            }
+        },
+    )
+    .placeholder("All rights");
+
+    children.push(
+        iced::widget::row![
+            text("Trustee:").size(13),
+            trustee_list,
+            text("Right:").size(13),
+            right_list,
+        ]
+        .spacing(8)
+        .align_y(iced::alignment::Vertical::Center)
+        .padding([4, 0])
+        .into(),
+    );
 
     // Apply filters + render matching ACEs.
     let visible: Vec<&AceLine> = acl
@@ -224,30 +268,6 @@ fn view_acl<'a>(
 /// can drag-select substrings and Ctrl+C them. `value` is borrowed for the
 /// returned element's lifetime — the caller must keep it alive (e.g. in an
 /// `AclCache` stored on App state, or a sorted attribute vec).
-/// A small clickable chip used in the ACL categorisation bar. Renders the
-/// label (e.g. "Administrators (5)") and toggles a filter on click.
-fn chip(label: String, active: bool, msg: Message) -> Element<'static, Message> {
-    button(text(label).size(13))
-        .on_press(msg)
-        .padding([6, 10])
-        .height(Length::Fixed(28.0))
-        .style(move |t, s| crate::theme::sidebar_buffer(t, s, active))
-        .into()
-}
-
-/// Wrap a list of chips into a horizontally scrollable row. iced has no
-/// native wrap layout, so users scroll right to see more chips. Each chip
-/// has a fixed 28px height so the bar is comfortably clickable.
-fn wrap_row(chips: Vec<Element<'static, Message>>) -> Element<'static, Message> {
-    let scroll = iced::widget::scrollable(
-        iced::widget::row(chips).spacing(6).padding([4, 4]),
-    )
-    .direction(iced::widget::scrollable::Direction::Horizontal(
-        iced::widget::scrollable::Scrollbar::default(),
-    ));
-    scroll.into()
-}
-
 fn name_value_row<'a>(name: &'a str, value: &'a str) -> Element<'a, Message> {
     use iced::widget::text_input;
     let name_el: iced::widget::Text<'a, iced::Theme, iced::Renderer> =

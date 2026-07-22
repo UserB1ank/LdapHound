@@ -237,20 +237,14 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::none()
         }
         Message::ToggleAclTrusteeFilter(s) => {
-            app.acl_filter_trustee = if app.acl_filter_trustee.as_deref() == Some(s.as_str()) {
-                None
-            } else {
-                Some(s)
-            };
+            // Empty string clears the filter (from the "(all)" pick_list
+            // entry). Otherwise set to the selected value.
+            app.acl_filter_trustee = if s.is_empty() { None } else { Some(s) };
             app.selected_ace = None;
             Task::none()
         }
         Message::ToggleAclRightFilter(s) => {
-            app.acl_filter_right = if app.acl_filter_right.as_deref() == Some(s.as_str()) {
-                None
-            } else {
-                Some(s)
-            };
+            app.acl_filter_right = if s.is_empty() { None } else { Some(s) };
             app.selected_ace = None;
             Task::none()
         }
