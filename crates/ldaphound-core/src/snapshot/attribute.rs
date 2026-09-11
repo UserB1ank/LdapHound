@@ -40,11 +40,7 @@ impl Attribute {
     /// is used as the base for the string-type offset table. `ads_type` comes
     /// from the matching `Property` (looked up by `attr_index` in the object's
     /// mapping table).
-    pub(crate) fn parse(
-        r: &mut LeReader<'_>,
-        attr_start: u64,
-        ads_type: AdsType,
-    ) -> Result<Self> {
+    pub(crate) fn parse(r: &mut LeReader<'_>, attr_start: u64, ads_type: AdsType) -> Result<Self> {
         let num_values = r.read_u32()? as usize;
         let values = match ads_type {
             AdsType::Boolean => {

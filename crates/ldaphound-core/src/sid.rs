@@ -34,22 +34,30 @@ impl Sid {
         if b.len() < need {
             return Err(ParseError::Malformed {
                 what: "SID",
-                detail: format!("need {need} bytes for {sub_count} sub-authorities, got {}", b.len()),
+                detail: format!(
+                    "need {need} bytes for {sub_count} sub-authorities, got {}",
+                    b.len()
+                ),
                 offset: 0,
             });
         }
         // IdentifierAuthority is big-endian (6 bytes).
-        let authority = u64::from_be_bytes([
-            0, 0, b[2], b[3], b[4], b[5], b[6], b[7],
-        ]);
+        let authority = u64::from_be_bytes([0, 0, b[2], b[3], b[4], b[5], b[6], b[7]]);
         let mut sub_authorities = Vec::with_capacity(sub_count);
         for i in 0..sub_count {
             let off = 8 + i * 4;
             sub_authorities.push(u32::from_le_bytes([
-                b[off], b[off + 1], b[off + 2], b[off + 3],
+                b[off],
+                b[off + 1],
+                b[off + 2],
+                b[off + 3],
             ]));
         }
-        Ok(Self { revision, authority, sub_authorities })
+        Ok(Self {
+            revision,
+            authority,
+            sub_authorities,
+        })
     }
 
     /// Canonical string form: `S-<rev>-<auth>-<sub0>-<sub1>...`
@@ -62,9 +70,15 @@ impl Sid {
         s
     }
 
-    pub fn revision(&self) -> u8 { self.revision }
-    pub fn authority(&self) -> u64 { self.authority }
-    pub fn sub_authorities(&self) -> &[u32] { &self.sub_authorities }
+    pub fn revision(&self) -> u8 {
+        self.revision
+    }
+    pub fn authority(&self) -> u64 {
+        self.authority
+    }
+    pub fn sub_authorities(&self) -> &[u32] {
+        &self.sub_authorities
+    }
 }
 
 impl fmt::Display for Sid {
@@ -91,18 +105,28 @@ impl FromStr for Sid {
             });
         }
         let revision: u8 = parts[1].parse().map_err(|_| ParseError::Malformed {
-            what: "SID", detail: "bad revision".into(), offset: 0,
+            what: "SID",
+            detail: "bad revision".into(),
+            offset: 0,
         })?;
         let authority: u64 = parts[2].parse().map_err(|_| ParseError::Malformed {
-            what: "SID", detail: "bad authority".into(), offset: 0,
+            what: "SID",
+            detail: "bad authority".into(),
+            offset: 0,
         })?;
         let mut sub_authorities = Vec::with_capacity(parts.len() - 3);
         for p in &parts[3..] {
             sub_authorities.push(p.parse().map_err(|_| ParseError::Malformed {
-                what: "SID", detail: "bad sub-authority".into(), offset: 0,
+                what: "SID",
+                detail: "bad sub-authority".into(),
+                offset: 0,
             })?);
         }
-        Ok(Self { revision, authority, sub_authorities })
+        Ok(Self {
+            revision,
+            authority,
+            sub_authorities,
+        })
     }
 }
 
@@ -125,15 +149,14 @@ mod tests {
     fn parses_domain_sid() {
         // S-1-5-21-1935163693-1572912069-975596842-1104 (from spec §5)
         let bytes = [
-            1, 5, 0, 0, 0, 0, 0, 5,
-            21, 0, 0, 0,
-            45, 65, 88, 115,
-            197, 187, 192, 93,
-            42, 109, 38, 58,
-            80, 4, 0, 0,
+            1, 5, 0, 0, 0, 0, 0, 5, 21, 0, 0, 0, 45, 65, 88, 115, 197, 187, 192, 93, 42, 109, 38,
+            58, 80, 4, 0, 0,
         ];
         let sid = Sid::from_bytes(&bytes).unwrap();
-        assert_eq!(sid.to_string(), "S-1-5-21-1935163693-1572912069-975596842-1104");
+        assert_eq!(
+            sid.to_string(),
+            "S-1-5-21-1935163693-1572912069-975596842-1104"
+        );
     }
 
     #[test]
@@ -141,15 +164,16 @@ mod tests {
         // Real owner SID from 0718.dat first object's nTSecurityDescriptor:
         // S-1-5-21-2502726253-3859040611-225969357-518
         let bytes = [
-            1, 5, 0, 0, 0, 0, 0, 5,
-            21, 0, 0, 0,
-            0x6D, 0x92, 0x2C, 0x95,   // 2502726253
-            0x63, 0x49, 0x04, 0xE6,   // 3859040611
-            0xCD, 0x04, 0x78, 0x0D,   // 225969357
-            0x06, 0x02, 0x00, 0x00,   // 518
+            1, 5, 0, 0, 0, 0, 0, 5, 21, 0, 0, 0, 0x6D, 0x92, 0x2C, 0x95, // 2502726253
+            0x63, 0x49, 0x04, 0xE6, // 3859040611
+            0xCD, 0x04, 0x78, 0x0D, // 225969357
+            0x06, 0x02, 0x00, 0x00, // 518
         ];
         let sid = Sid::from_bytes(&bytes).unwrap();
-        assert_eq!(sid.to_string(), "S-1-5-21-2502726253-3859040611-225969357-518");
+        assert_eq!(
+            sid.to_string(),
+            "S-1-5-21-2502726253-3859040611-225969357-518"
+        );
     }
 
     #[test]

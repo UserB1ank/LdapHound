@@ -47,8 +47,7 @@ pub fn view<'a>(
         walk(root, 0, snap, expanded, selected, filter, &mut rows);
     }
     let tree_col = if rows.is_empty() {
-        column![text("(no matches)").color(crate::theme::dim_text())]
-            .spacing(1)
+        column![text("(no matches)").color(crate::theme::dim_text())].spacing(1)
     } else {
         column(rows).spacing(1)
     };

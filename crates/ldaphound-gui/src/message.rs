@@ -4,15 +4,22 @@
 //! parse failures are stringified at the task boundary.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use iced::widget::pane_grid;
-use ldaphound_core::{Sid, Snapshot};
+use ldaphound_core::{LdapGraph, Sid, Snapshot};
+
+#[derive(Debug, Clone)]
+pub struct LoadedDirectory {
+    pub snapshot: Arc<Snapshot>,
+    pub graph: Arc<LdapGraph>,
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
     OpenFileClicked,
     FileSelected(Option<PathBuf>),
-    ParseCompleted(Result<Snapshot, String>),
+    ParseCompleted(Result<LoadedDirectory, String>),
 
     /// Toggle expand/collapse of a tree node identified by its DN.
     ToggleNode(String),
@@ -41,5 +48,10 @@ pub enum Message {
     ToggleAclTrusteeFilter(String),
     /// Toggle a right filter on the ACL tab. Empty string clears it.
     ToggleAclRightFilter(String),
-}
 
+    /// AI analyst controls. Network access occurs only on AnalyzeClicked.
+    AiQuestionChanged(String),
+    AiModelChanged(String),
+    AiAnalyzeClicked,
+    AiAnalysisCompleted(Result<String, String>),
+}

@@ -67,17 +67,13 @@ impl SecurityDescriptor {
             None
         };
         // DACL is only meaningful when DP (DACL present) is set.
-        let dacl = if (control_flags & control_flag::DP) != 0
-            && off_dacl != 0
-            && off_dacl < b.len()
+        let dacl = if (control_flags & control_flag::DP) != 0 && off_dacl != 0 && off_dacl < b.len()
         {
             Some(Acl::parse(&b[off_dacl..])?)
         } else {
             None
         };
-        let sacl = if (control_flags & control_flag::SP) != 0
-            && off_sacl != 0
-            && off_sacl < b.len()
+        let sacl = if (control_flags & control_flag::SP) != 0 && off_sacl != 0 && off_sacl < b.len()
         {
             Some(Acl::parse(&b[off_sacl..])?)
         } else {

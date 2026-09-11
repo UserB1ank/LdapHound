@@ -13,12 +13,12 @@ use crate::sid::Sid;
 /// ACE type byte. See spec §7.4 table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AceType {
-    AccessAllowed,        // 0x00
-    AccessDenied,         // 0x01
-    SystemAudit,          // 0x02
-    AccessAllowedObject,  // 0x05
-    AccessDeniedObject,   // 0x06
-    SystemAuditObject,    // 0x07
+    AccessAllowed,       // 0x00
+    AccessDenied,        // 0x01
+    SystemAudit,         // 0x02
+    AccessAllowedObject, // 0x05
+    AccessDeniedObject,  // 0x06
+    SystemAuditObject,   // 0x07
     Other(u8),
 }
 
@@ -133,13 +133,21 @@ impl Ace {
         let ace_type = AceType::from_u8(type_byte);
 
         let ace = match ace_type {
-            AceType::AccessAllowed | AceType::AccessDenied | AceType::SystemAudit => {
+            AceType::AccessAllowed | AceType::AccessDenied => {
                 let mask = read_mask(body)?;
                 let trustee = read_sid(&body[4..])?;
                 if ace_type == AceType::AccessDenied {
-                    Ace::AccessDenied { mask, flags, trustee }
+                    Ace::AccessDenied {
+                        mask,
+                        flags,
+                        trustee,
+                    }
                 } else {
-                    Ace::AccessAllowed { mask, flags, trustee }
+                    Ace::AccessAllowed {
+                        mask,
+                        flags,
+                        trustee,
+                    }
                 }
             }
             AceType::AccessAllowedObject | AceType::AccessDeniedObject => {
@@ -152,9 +160,8 @@ impl Ace {
                     });
                 }
                 let mask = read_mask(body)?;
-                let object_flags = ObjectFlags(u32::from_le_bytes([
-                    body[4], body[5], body[6], body[7],
-                ]));
+                let object_flags =
+                    ObjectFlags(u32::from_le_bytes([body[4], body[5], body[6], body[7]]));
                 let mut p = 8;
                 let object_type = if object_flags.0 & ObjectFlags::OBJECT_TYPE_PRESENT != 0 {
                     let g = Guid::from_bytes(&body[p..p + 16])?;
@@ -174,15 +181,25 @@ impl Ace {
                 let trustee = read_sid(&body[p..])?;
                 if ace_type == AceType::AccessDeniedObject {
                     Ace::AccessDeniedObject {
-                        mask, flags, object_flags, object_type, inherited_object_type, trustee,
+                        mask,
+                        flags,
+                        object_flags,
+                        object_type,
+                        inherited_object_type,
+                        trustee,
                     }
                 } else {
                     Ace::AccessAllowedObject {
-                        mask, flags, object_flags, object_type, inherited_object_type, trustee,
+                        mask,
+                        flags,
+                        object_flags,
+                        object_type,
+                        inherited_object_type,
+                        trustee,
                     }
                 }
             }
-            AceType::SystemAuditObject | AceType::Other(_) => Ace::Unknown {
+            AceType::SystemAudit | AceType::SystemAuditObject | AceType::Other(_) => Ace::Unknown {
                 type_byte,
                 flags,
                 raw: body.to_vec(),
@@ -193,10 +210,10 @@ impl Ace {
 
     pub fn trustee(&self) -> Option<&Sid> {
         match self {
-            Ace::AccessAllowed { trustee, .. }
-            | Ace::AccessDenied { trustee, .. } => Some(trustee),
-            Ace::AccessAllowedObject { trustee, .. }
-            | Ace::AccessDeniedObject { trustee, .. } => Some(trustee),
+            Ace::AccessAllowed { trustee, .. } | Ace::AccessDenied { trustee, .. } => Some(trustee),
+            Ace::AccessAllowedObject { trustee, .. } | Ace::AccessDeniedObject { trustee, .. } => {
+                Some(trustee)
+            }
             Ace::Unknown { .. } => None,
         }
     }

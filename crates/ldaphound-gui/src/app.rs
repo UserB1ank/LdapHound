@@ -9,13 +9,14 @@
 //! ```
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use iced::Task;
 use iced::widget::pane_grid::{self, PaneGrid};
 use iced::widget::{button, column, container, row, text};
 use iced::{Element, Length};
 
-use ldaphound_core::{Snapshot, Tree};
+use ldaphound_core::{LdapGraph, Snapshot, Tree};
 
 use crate::message::Message;
 use crate::task;
@@ -30,7 +31,8 @@ pub enum Pane {
 
 /// Application state.
 pub struct App {
-    snapshot: Option<Snapshot>,
+    snapshot: Option<Arc<Snapshot>>,
+    graph: Option<Arc<LdapGraph>>,
     tree: Option<Tree>,
 
     /// Two-pane layout: [Sidebar | Main] with a draggable divider.
@@ -42,7 +44,7 @@ pub struct App {
     selected: Option<usize>,
     /// Selected ACE index within the current object's DACL.
     selected_ace: Option<usize>,
-    /// Right pane active tab: 0 = Attributes, 1 = ACL.
+    /// Right pane active tab: 0 = Attributes, 1 = ACL, 2 = AI Analysis.
     active_tab: usize,
     /// Sidebar filter text (substring on DN / display name).
     filter: String,
@@ -64,6 +66,10 @@ pub struct App {
 
     status: String,
     parsing: bool,
+    ai_question: String,
+    ai_model: String,
+    ai_answer: String,
+    ai_running: bool,
 }
 
 pub fn new() -> App {
@@ -76,6 +82,7 @@ pub fn new() -> App {
 
     App {
         snapshot: None,
+        graph: None,
         tree: None,
         panes,
         expanded: HashSet::new(),
@@ -87,8 +94,12 @@ pub fn new() -> App {
         acl_filter_right: None,
         acl_cache: crate::view::object_view::AclCache::default(),
         attr_cache: crate::view::object_view::AttrCache::default(),
-        status: "Open a .dat snapshot to begin.".into(),
+        status: "Open a .dat snapshot or an ldapsearch LDIF dump to begin.".into(),
         parsing: false,
+        ai_question: "Find high-impact privilege paths and misconfigurations.".into(),
+        ai_model: std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-5.6".into()),
+        ai_answer: String::new(),
+        ai_running: false,
     }
 }
 
@@ -107,7 +118,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             Task::perform(
                 async {
                     rfd::AsyncFileDialog::new()
-                        .add_filter("ADExplorer snapshot", &["dat"])
+                        .add_filter("ADExplorer snapshot (.dat)", &["dat"])
+                        .add_filter("LDAP search result (.ldif)", &["ldif", "txt", "log"])
                         .pick_file()
                         .await
                         .map(|h| h.path().to_path_buf())
@@ -129,7 +141,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
         Message::ParseCompleted(result) => {
             app.parsing = false;
             match result {
-                Ok(snap) => {
+                Ok(loaded) => {
+                    let snap = loaded.snapshot;
                     app.status = format!(
                         "{} objects loaded from {}",
                         snap.objects.len(),
@@ -148,6 +161,9 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.attr_cache = crate::view::object_view::AttrCache::default();
                     app.filter.clear();
                     app.snapshot = Some(snap);
+                    app.graph = Some(loaded.graph);
+                    app.ai_answer.clear();
+                    app.ai_running = false;
                 }
                 Err(e) => app.status = format!("Parse failed: {e}"),
             }
@@ -204,9 +220,10 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             // Find the object with this SID, select it, and expand every
             // ancestor DN so the target is visible in the tree.
             if let Some(snap) = app.snapshot.as_ref() {
-                let target = snap.objects.iter().position(|o| {
-                    o.object_sid().map(|s| s == sid).unwrap_or(false)
-                });
+                let target = snap
+                    .objects
+                    .iter()
+                    .position(|o| o.object_sid().map(|s| s == sid).unwrap_or(false));
                 if let Some(idx) = target {
                     // Expand ancestors: walk up the DN, mark each parent.
                     if let Some(dn) = snap.objects[idx].dn() {
@@ -228,10 +245,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
                     app.selected = Some(idx);
                     app.selected_ace = None;
                     let obj = &snap.objects[idx];
-                    app.acl_cache =
-                        crate::view::object_view::build_acl_cache(obj, snap);
-                    app.attr_cache =
-                        crate::view::object_view::build_attr_cache(obj);
+                    app.acl_cache = crate::view::object_view::build_acl_cache(obj, snap);
+                    app.attr_cache = crate::view::object_view::build_attr_cache(obj);
                 }
             }
             Task::none()
@@ -248,18 +263,55 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.selected_ace = None;
             Task::none()
         }
+        Message::AiQuestionChanged(question) => {
+            app.ai_question = question;
+            Task::none()
+        }
+        Message::AiModelChanged(model) => {
+            app.ai_model = model;
+            Task::none()
+        }
+        Message::AiAnalyzeClicked => {
+            if app.ai_running || app.ai_question.trim().is_empty() {
+                return Task::none();
+            }
+            let Some(graph) = app.graph.as_ref() else {
+                app.ai_answer = "No LDAP graph is loaded.".into();
+                return Task::none();
+            };
+            app.ai_running = true;
+            app.ai_answer = "Analyzing the curated LDAP graph…".into();
+            app.status = "AI analysis running (curated graph only; store=false)…".into();
+            task::analyze_graph(
+                Arc::clone(graph),
+                app.ai_question.trim().to_string(),
+                app.ai_model.trim().to_string(),
+                app.selected,
+            )
+        }
+        Message::AiAnalysisCompleted(result) => {
+            app.ai_running = false;
+            match result {
+                Ok(answer) => {
+                    app.ai_answer = answer;
+                    app.status = "AI analysis completed.".into();
+                }
+                Err(error) => {
+                    app.ai_answer = format!("AI analysis failed: {error}");
+                    app.status = "AI analysis failed.".into();
+                }
+            }
+            Task::none()
+        }
     }
 }
 
 pub fn view(app: &App) -> Element<'_, Message> {
     // Top menu bar: Open .dat button + status text, pinned above everything.
     let open_btn = button(
-        row![
-            crate::icon::folder(),
-            iced::widget::text("Open .dat").size(13),
-        ]
-        .spacing(6)
-        .align_y(iced::alignment::Vertical::Center),
+        row![crate::icon::folder(), iced::widget::text("Open…").size(13),]
+            .spacing(6)
+            .align_y(iced::alignment::Vertical::Center),
     )
     .on_press_maybe(if app.parsing {
         None
@@ -283,8 +335,8 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .width(Length::Fill)
     .style(|t| crate::theme::pane_title_bar(t));
 
-    let body: Element<'_, Message> = match (&app.snapshot, &app.tree) {
-        (Some(snap), Some(tree)) => {
+    let body: Element<'_, Message> = match (&app.snapshot, &app.graph, &app.tree) {
+        (Some(snap), Some(graph), Some(tree)) => {
             let expanded = &app.expanded;
             let selected = app.selected;
             let selected_ace = app.selected_ace;
@@ -298,34 +350,35 @@ pub fn view(app: &App) -> Element<'_, Message> {
             let acl_filter_trustee = &app.acl_filter_trustee;
             let acl_filter_right = &app.acl_filter_right;
 
-            let pane_grid: Element<'_, Message> = PaneGrid::new(&app.panes, move |_id, pane, _m| {
-                let element: iced::Element<'_, Message> = match pane {
-                    Pane::Sidebar => sidebar::view(
-                        snap,
-                        tree,
-                        expanded,
-                        selected,
-                        filter,
-                        parsing,
-                    ),
-                    Pane::Main => main_pane(
-                        selected,
-                        selected_ace,
-                        active_tab,
-                        snap,
-                        attr_cache,
-                        acl_cache,
-                        acl_filter_trustee,
-                        acl_filter_right,
-                    ),
-                };
-                pane_grid::Content::new(element)
-            })
-            .spacing(4)
-            .on_resize(8, Message::PaneResized)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
+            let pane_grid: Element<'_, Message> =
+                PaneGrid::new(&app.panes, move |_id, pane, _m| {
+                    let element: iced::Element<'_, Message> = match pane {
+                        Pane::Sidebar => {
+                            sidebar::view(snap, tree, expanded, selected, filter, parsing)
+                        }
+                        Pane::Main => main_pane(
+                            selected,
+                            selected_ace,
+                            active_tab,
+                            snap,
+                            graph,
+                            attr_cache,
+                            acl_cache,
+                            acl_filter_trustee,
+                            acl_filter_right,
+                            &app.ai_question,
+                            &app.ai_model,
+                            &app.ai_answer,
+                            app.ai_running,
+                        ),
+                    };
+                    pane_grid::Content::new(element)
+                })
+                .spacing(4)
+                .on_resize(8, Message::PaneResized)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
 
             container(pane_grid)
                 .padding(8)
@@ -334,13 +387,13 @@ pub fn view(app: &App) -> Element<'_, Message> {
                 .into()
         }
         _ => container(
-                iced::widget::text("Open a .dat snapshot to begin.")
-                    .color(crate::theme::dim_text()),
-            )
-            .center(Length::Fill)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into(),
+            iced::widget::text("Open a .dat snapshot or an ldapsearch LDIF dump to begin.")
+                .color(crate::theme::dim_text()),
+        )
+        .center(Length::Fill)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into(),
     };
 
     let content = iced::widget::column![menu_bar, body]
@@ -361,10 +414,15 @@ fn main_pane<'a>(
     selected_ace: Option<usize>,
     active_tab: usize,
     snap: &'a Snapshot,
+    graph: &'a LdapGraph,
     attr_cache: &'a crate::view::object_view::AttrCache,
     acl_cache: &'a crate::view::object_view::AclCache,
     acl_filter_trustee: &'a Option<String>,
     acl_filter_right: &'a Option<String>,
+    ai_question: &'a str,
+    ai_model: &'a str,
+    ai_answer: &'a str,
+    ai_running: bool,
 ) -> Element<'a, Message> {
     let Some(idx) = selected else {
         return container(text("Select an object in the tree."))
@@ -406,12 +464,17 @@ fn main_pane<'a>(
     let body = object_view::view(
         obj,
         snap,
+        graph,
         selected_ace,
         active_tab,
         attr_cache,
         acl_cache,
         acl_filter_trustee.as_deref(),
         acl_filter_right.as_deref(),
+        ai_question,
+        ai_model,
+        ai_answer,
+        ai_running,
     );
 
     column![title_bar, body]

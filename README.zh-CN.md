@@ -3,7 +3,8 @@
 [English](./README.md) | **简体中文**
 
 > 深度解析 Active Directory **安全描述符（Security Descriptor）** 的离线工具——
-> 直接读取 ADExplorer `.dat` 快照，无需连接域控。同时提供 GUI 与 CLI。
+> 直接读取 ADExplorer `.dat` 快照或 `ldapsearch` LDIF 导出，无需连接域控。
+> 同时提供 GUI 与 CLI。
 
 ![1](docs\1.png)
 
@@ -30,13 +31,131 @@ naming context）、解码常见 `ads_type` 属性（String / Integer / OctetStr
 SID / GUID / UTCTime），并支持 RFC 4515 LDAP 搜索过滤器
 （`(&(objectCategory=Person)(objectClass=User))`、`(sAMAccountName=j*)`）。
 
+同样的视图也适用于 `ldapsearch` 查询结果：把 LDIF 输出保存成文件直接打开——
+见 [导入 `ldapsearch` 查询结果](#导入-ldapsearch-查询结果ldif)。
+
+## 导入 `ldapsearch` 查询结果（LDIF）
+
+LdapHound 可以直接打开 OpenLDAP `ldapsearch`（及兼容工具）写出的 LDIF 文件，
+树、属性、ACL 视图与 `.dat` 快照完全一致。输入格式自动检测：GUI 的
+**Open…** 和 CLI 都同时接受两种文件。
+
+### 推荐查询语法
+
+```bash
+ldapsearch -o ldif-wrap=no -E pr=1000/noprompt \
+  -x -H ldap://dc01.corp.local -D 'CORP\jdoe' -W \
+  -b 'DC=corp,DC=local' \
+  '(objectClass=*)' '*' nTSecurityDescriptor \
+  > corp.ldif
+```
+
+各参数说明：
+
+| 参数 | 说明 |
+| --- | --- |
+| `-E pr=1000/noprompt` | **必加。** AD 单页最多返回 1000 条，必须用分页才能导全量数据。 |
+| `'*' nTSecurityDescriptor` | `*` 请求全部用户属性；`nTSecurityDescriptor` 必须显式列出，否则 ACL 标签页为空。 |
+| `-o ldif-wrap=no` | 让几 KB 的安全描述符保持在单行。可省略——折行同样支持。 |
+| `-t` / `-T` | **不要使用。** 二进制属性会被写到临时文件而不是内联 base64，导入器无法读取。 |
+
+二进制属性（`objectSid`、`objectGUID`、`nTSecurityDescriptor` 等）会以
+base64 形式返回（`objectSid:: AQAA...`），LdapHound 自动解码。如果安全
+描述符为空，说明绑定账号缺少对这些对象的 `READ_CONTROL` 权限。
+
+大域场景下只请求 LdapHound 需要的属性，传输明显更快：
+
+```bash
+ldapsearch -o ldif-wrap=no -E pr=1000/noprompt \
+  -x -H ldap://dc01.corp.local -D 'CORP\jdoe' -W \
+  -b 'DC=corp,DC=local' \
+  '(objectClass=*)' \
+  objectClass cn name sAMAccountName member memberOf objectSid objectGUID nTSecurityDescriptor \
+  > corp.ldif
+```
+
+这组属性覆盖：目录树（`objectClass` + 每条记录必带的 `dn:`）、委托方解析
+（`objectSid` + `sAMAccountName`/`name`）、ACL 标签页
+（`nTSecurityDescriptor`）；`member`/`memberOf` 为可选补充。
+
+缩小范围同理——用 `-b` 或 LDAP 过滤器限制：
+
+```bash
+# 只要用户和计算机对象
+... -b 'DC=corp,DC=local' '(|(objectCategory=Person)(objectCategory=Computer))' ...
+# 只要某个 OU
+... -b 'OU=Sales,DC=corp,DC=local' '(objectClass=*)' ...
+```
+
+Configuration 与 Schema 两个 naming context 可以单独导出后**拼接到同一个
+文件**里——LDIF 记录是自描述的：
+
+```bash
+ldapsearch ... -b 'CN=Configuration,DC=corp,DC=local' '(objectClass=*)' '*' nTSecurityDescriptor >> corp.ldif
+```
+
+Kerberos 认证（用 `-Y GSSAPI` 替代 `-x -D ... -W`）和 LDAPS
+（`ldaps://dc01.corp.local` 或 `-ZZ`）按常规用法即可。
+
+之后像任何快照一样分析：
+
+```bash
+ldaphound-cli corp.ldif --type user
+ldaphound-cli corp.ldif --object "CN=Administrator,CN=Users,DC=corp,DC=local"
+```
+
+## AI 关系图谱分析
+
+LdapHound 可以通过 OpenAI Responses API 的
+[函数调用](https://developers.openai.com/api/docs/guides/function-calling)，
+向模型提供一个有边界、只读的 LDAP 关系图。模型可以搜索节点、查看节点、
+遍历邻居、查找路径和列出高风险关系，但不会直接收到原始快照。
+
+当前图谱包含：
+
+- 目录包含关系和组成员关系（包括 `primaryGroupID`）
+- `manager` / `managedBy`、对象所有权、GPO 链接和 SID History
+- 带权限名、掩码和继承信息的允许/拒绝 ACL 关系
+- 基于资源的约束委派（RBCD）与约束委派 SPN
+
+API 密钥只通过进程环境变量提供：
+
+```bash
+export OPENAI_API_KEY='...'
+# 可选，默认使用 gpt-5.6
+export OPENAI_MODEL='gpt-5.6'
+
+ldaphound-cli snapshot.dat --ai "查找通向高权限组的高风险路径"
+ldaphound-cli snapshot.dat --ai "分析这个账号" --ai-focus 'CORP\\jdoe'
+```
+
+GUI 在所选对象的 **AI Analysis** 标签页提供相同功能。只有点击
+**Analyze graph** 后才会访问模型服务。
+
+### 隐私边界
+
+- API 请求设置 `store: false`；密钥不会进入应用状态、文件、图谱导出、
+  提示词或日志。
+- 不上传原始 `.dat`/LDIF、原始安全描述符、二进制值或任意 LDAP 属性；
+  工具仅返回长度受限的身份、安全状态和关系字段。
+- LDAP 值全部视为不可信数据，属性中的文本不会被当作模型指令执行。
+- 发起请求前可以导出并检查 AI 工具实际能够暴露的全部数据：
+
+```bash
+ldaphound-cli snapshot.dat --export-ai-graph ai-graph.json
+```
+
+名称、DN、SID、选定的安全属性和图关系本身仍属于目录数据；模型请求这些
+字段时会发生传输。请使用组织批准的 API 项目和数据处理策略。
+
 ## 使用方法 —— GUI
 
 ```bash
 cargo run --release -p ldaphound-gui
 ```
 
-- 顶部菜单栏：**Open .dat**
+- 顶部菜单栏：**Open…**——ADExplorer `.dat` 快照或 LDAP/LDIF 导出
+  （格式自动检测）
 - 左侧目录树：三个 naming context 的递归树，支持展开/折叠、子串过滤、
   按对象类型显示图标
 - 主窗格：对象 TitleBar（图标 + 名称 + class + DN），下方两个标签页
@@ -49,8 +168,13 @@ cargo run --release -p ldaphound-gui
 ## 使用方法 —— CLI
 
 ```bash
-# 列出所有对象（ldapsearch 风格输出）
+# 列出所有对象（ldapsearch 风格输出）；输入可以是 ADExplorer .dat 快照，
+# 也可以是 ldapsearch LDIF 导出（自动检测）
 ldaphound-cli snapshot.dat
+ldaphound-cli corp.ldif
+
+# 通过隐私受限的关系图谱进行 AI 分析
+ldaphound-cli snapshot.dat --ai "查找危险的委派权限"
 
 # 查看单个对象的完整安全描述符 + ACL 详情
 ldaphound-cli snapshot.dat --object "CN=Administrator,CN=Users,DC=x"

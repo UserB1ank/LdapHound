@@ -1,4 +1,8 @@
 /target
 .idea
-.dat
+.env
+.env.*
+!.env.example
+*.dat
 /example
+/ai-graph*.json

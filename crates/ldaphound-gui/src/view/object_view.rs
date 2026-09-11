@@ -9,23 +9,29 @@ use iced::{Element, Length};
 use iced_aw::{TabLabel, Tabs};
 
 use ldaphound_core::security::descriptor::SecurityDescriptor;
-use ldaphound_core::{Object, Snapshot};
+use ldaphound_core::{LdapGraph, Object, Snapshot};
 
 use crate::message::Message;
 
 // Tab indices — kept in sync with the order tabs are pushed below.
 const TAB_ATTRIBUTES: usize = 0;
 const TAB_ACL: usize = 1;
+const TAB_AI: usize = 2;
 
 pub fn view<'a>(
     obj: &'a Object,
     snap: &'a Snapshot,
+    graph: &'a LdapGraph,
     selected_ace: Option<usize>,
     active_tab: usize,
     attr_cache: &'a AttrCache,
     acl_cache: &'a AclCache,
     acl_filter_trustee: Option<&'a str>,
     acl_filter_right: Option<&'a str>,
+    ai_question: &'a str,
+    ai_model: &'a str,
+    ai_answer: &'a str,
+    ai_running: bool,
 ) -> Element<'a, Message> {
     let sid_line = obj
         .object_sid()
@@ -50,16 +56,17 @@ pub fn view<'a>(
                 acl_filter_right,
             ),
         )
+        .push(
+            TAB_AI,
+            TabLabel::Text("AI Analysis".into()),
+            view_ai(graph, ai_question, ai_model, ai_answer, ai_running),
+        )
         .set_active_tab(&active_tab)
         .height(Length::Fill);
 
     let mut col_children: Vec<Element<'a, Message>> = Vec::new();
     if !sid_line.is_empty() {
-        col_children.push(
-            text(sid_line)
-                .color(crate::theme::dim_text())
-                .into(),
-        );
+        col_children.push(text(sid_line).color(crate::theme::dim_text()).into());
     }
     col_children.push(tabs.into());
     let col = column(col_children).spacing(4);
@@ -69,6 +76,74 @@ pub fn view<'a>(
         .padding([4, 10])
         .style(|t| crate::theme::pane_body(t))
         .into()
+}
+
+fn view_ai<'a>(
+    graph: &'a LdapGraph,
+    question: &'a str,
+    model: &'a str,
+    answer: &'a str,
+    running: bool,
+) -> Element<'a, Message> {
+    use iced::widget::text_input;
+
+    let summary = graph.summary();
+    let model_input = text_input("OpenAI model", model)
+        .on_input(Message::AiModelChanged)
+        .width(Length::FillPortion(2));
+    let question_input = text_input("Ask about privilege paths, ACLs, or delegation…", question)
+        .on_input(Message::AiQuestionChanged)
+        .width(Length::Fill);
+    let analyze = button(text(if running {
+        "Analyzing…"
+    } else {
+        "Analyze graph"
+    }))
+    .on_press_maybe((!running && !question.trim().is_empty()).then_some(Message::AiAnalyzeClicked))
+    .padding([5, 10])
+    .style(|theme, status| crate::theme::primary(theme, status));
+
+    let mut children: Vec<Element<'a, Message>> = vec![
+        text("AI receives a curated relationship graph, not the raw snapshot.")
+            .size(13)
+            .into(),
+        text(format!(
+            "{} directory nodes, {} external identities/services, {} typed edges",
+            summary.directory_nodes, summary.external_nodes, summary.edges
+        ))
+        .color(crate::theme::dim_text())
+        .into(),
+        text(
+            "Privacy: arbitrary attributes, credential fields, and raw security descriptors are omitted. No request is made until you click Analyze; requests use store=false. Configure OPENAI_API_KEY in the process environment.",
+        )
+        .size(12)
+        .color(crate::theme::dim_text())
+        .into(),
+        row![text("Model:"), model_input]
+            .spacing(8)
+            .align_y(iced::alignment::Vertical::Center)
+            .into(),
+        question_input.into(),
+        row![
+            analyze,
+            iced::widget::Space::new().width(Length::Fill),
+            button(text("Copy answer").size(12))
+                .on_press_maybe((!answer.is_empty()).then(|| Message::CopyToClipboard(answer.into())))
+                .padding([4, 8])
+                .style(|theme, status| crate::theme::secondary(theme, status)),
+        ]
+        .align_y(iced::alignment::Vertical::Center)
+        .into(),
+    ];
+    if !answer.is_empty() {
+        children.push(
+            container(text(answer))
+                .padding(8)
+                .width(Length::Fill)
+                .into(),
+        );
+    }
+    column(children).spacing(8).into()
 }
 
 fn view_attributes<'a>(attr_cache: &'a AttrCache) -> Element<'a, Message> {
@@ -125,18 +200,14 @@ fn view_acl<'a>(
         let count = by_trustee.get(t).copied().unwrap_or(0);
         format!("{t} ({count})")
     });
-    let trustee_list = pick_list(
-        trustee_options,
-        trustee_selected,
-        |pick: String| {
-            if pick == "(all)" {
-                Message::ToggleAclTrusteeFilter(String::new())
-            } else {
-                let name = pick.split(" (").next().unwrap_or(&pick).to_string();
-                Message::ToggleAclTrusteeFilter(name)
-            }
-        },
-    )
+    let trustee_list = pick_list(trustee_options, trustee_selected, |pick: String| {
+        if pick == "(all)" {
+            Message::ToggleAclTrusteeFilter(String::new())
+        } else {
+            let name = pick.split(" (").next().unwrap_or(&pick).to_string();
+            Message::ToggleAclTrusteeFilter(name)
+        }
+    })
     .placeholder("All trustees");
 
     let mut right_options: Vec<String> = vec!["(all)".to_string()];
@@ -149,18 +220,14 @@ fn view_acl<'a>(
         let count = by_right.get(r).copied().unwrap_or(0);
         format!("{r} ({count})")
     });
-    let right_list = pick_list(
-        right_options,
-        right_selected,
-        |pick: String| {
-            if pick == "(all)" {
-                Message::ToggleAclRightFilter(String::new())
-            } else {
-                let name = pick.split(" (").next().unwrap_or(&pick).to_string();
-                Message::ToggleAclRightFilter(name)
-            }
-        },
-    )
+    let right_list = pick_list(right_options, right_selected, |pick: String| {
+        if pick == "(all)" {
+            Message::ToggleAclRightFilter(String::new())
+        } else {
+            let name = pick.split(" (").next().unwrap_or(&pick).to_string();
+            Message::ToggleAclRightFilter(name)
+        }
+    })
     .placeholder("All rights");
 
     children.push(
@@ -195,8 +262,12 @@ fn view_acl<'a>(
         })
         .collect();
     children.push(
-        text(format!("DACL ({} of {} ACEs):", visible.len(), acl.aces.len()))
-            .into(),
+        text(format!(
+            "DACL ({} of {} ACEs):",
+            visible.len(),
+            acl.aces.len()
+        ))
+        .into(),
     );
 
     for ace in visible.iter() {
@@ -293,7 +364,11 @@ fn format_ace_row(i: usize, ace: &AceLine) -> String {
         ace.kind,
         ace.right,
         ace.mask,
-        if ace.inherited { "inherited" } else { "explicit" },
+        if ace.inherited {
+            "inherited"
+        } else {
+            "explicit"
+        },
         ace.trustee,
     )
 }
@@ -404,17 +479,18 @@ pub fn build_acl_cache(obj: &Object, snap: &Snapshot) -> AclCache {
                         .map(|m| format!("{m} [{}]", m.human_names().join(",")))
                         .unwrap_or_else(|| "-".into());
                     let inherited = ace.is_inherited();
-                    let inherited_str = if inherited { "inherited".into() } else { "explicit".into() };
+                    let inherited_str = if inherited {
+                        "inherited".into()
+                    } else {
+                        "explicit".into()
+                    };
                     let trustee_sid = ace.trustee().cloned();
                     let trustee = match ace.trustee() {
                         Some(sid) => match find_by_sid(snap, sid) {
                             Some(o) => {
                                 let principal = o.principal_name();
                                 let class_owned = o.object_classes();
-                                let class = class_owned
-                                    .last()
-                                    .map(|s| s.as_str())
-                                    .unwrap_or("?");
+                                let class = class_owned.last().map(|s| s.as_str()).unwrap_or("?");
                                 format!("{principal}  [{class}]  {sid}")
                             }
                             None => format!("{sid}  (unresolved)"),

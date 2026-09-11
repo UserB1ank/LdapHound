@@ -12,8 +12,8 @@
 //! `(sAMAccountName=j*)`. The legacy substring `Filter` is kept for the GUI
 //! filter box, which prefers a simpler UX.
 
-use crate::snapshot::{AttributeValue, Object, Snapshot};
 use crate::Sid;
+use crate::snapshot::{AttributeValue, Object, Snapshot};
 
 /// Resolve a user-supplied object query to a snapshot index.
 ///
@@ -37,7 +37,10 @@ pub fn resolve_object(snap: &Snapshot, q: &str) -> Option<usize> {
     }
     let lower = q.to_ascii_lowercase();
     for (i, o) in snap.objects.iter().enumerate() {
-        if o.dn().map(|d| d.eq_ignore_ascii_case(&lower)).unwrap_or(false) {
+        if o.dn()
+            .map(|d| d.eq_ignore_ascii_case(&lower))
+            .unwrap_or(false)
+        {
             return Some(i);
         }
     }
@@ -195,9 +198,7 @@ impl LdapFilter {
             }
             LdapFilter::Approx { attr, value } => {
                 let lower = value.to_ascii_lowercase();
-                match_attr_values(obj, attr, |v| {
-                    v.to_ascii_lowercase().contains(&lower)
-                })
+                match_attr_values(obj, attr, |v| v.to_ascii_lowercase().contains(&lower))
             }
             LdapFilter::GreaterOrEqual { attr, value } => {
                 match_attr_values(obj, attr, |v| compare_ge(v, value))
@@ -322,7 +323,9 @@ fn substrings_match(value: &str, parts: &[String]) -> bool {
 /// Display form; octet / SD blobs are skipped (callers should use a typed
 /// comparison for those).
 fn match_attr_values<P: Fn(&str) -> bool>(obj: &Object, attr: &str, pred: P) -> bool {
-    let Some(attr) = obj.get(attr) else { return false };
+    let Some(attr) = obj.get(attr) else {
+        return false;
+    };
     for v in &attr.values {
         let owned;
         let s: &str = match v {
@@ -503,7 +506,9 @@ fn build_assertion(attr: &str, op: &str, value: &str) -> LdapFilter {
     if op == "=" {
         // Presence: `(attr=*)`
         if value == "*" {
-            return LdapFilter::Present { attr: attr.to_string() };
+            return LdapFilter::Present {
+                attr: attr.to_string(),
+            };
         }
         // Substrings: contains at least one `*` and at least one literal.
         if value.contains('*') {
@@ -598,7 +603,10 @@ mod tests {
         }
         match LdapFilter::parse("(cn=*admin*)").unwrap() {
             LdapFilter::Substrings { parts, .. } => {
-                assert_eq!(parts, vec!["".to_string(), "admin".to_string(), "".to_string()]);
+                assert_eq!(
+                    parts,
+                    vec!["".to_string(), "admin".to_string(), "".to_string()]
+                );
             }
             _ => panic!("expected Substrings"),
         }
@@ -607,8 +615,16 @@ mod tests {
     #[test]
     fn equality_matches_case_insensitive() {
         let o = obj(&[("objectClass", vec![s("Computer")])]);
-        assert!(LdapFilter::parse("(objectClass=computer)").unwrap().matches(&o));
-        assert!(LdapFilter::parse("(objectClass=COMPUTER)").unwrap().matches(&o));
+        assert!(
+            LdapFilter::parse("(objectClass=computer)")
+                .unwrap()
+                .matches(&o)
+        );
+        assert!(
+            LdapFilter::parse("(objectClass=COMPUTER)")
+                .unwrap()
+                .matches(&o)
+        );
         assert!(!LdapFilter::parse("(objectClass=user)").unwrap().matches(&o));
     }
 
@@ -630,11 +646,23 @@ mod tests {
     #[test]
     fn substrings_prefix_match() {
         let o = obj(&[("sAMAccountName", vec![s("jdoe")])]);
-        assert!(LdapFilter::parse("(sAMAccountName=j*)").unwrap().matches(&o));
-        assert!(!LdapFilter::parse("(sAMAccountName=k*)").unwrap().matches(&o));
+        assert!(
+            LdapFilter::parse("(sAMAccountName=j*)")
+                .unwrap()
+                .matches(&o)
+        );
+        assert!(
+            !LdapFilter::parse("(sAMAccountName=k*)")
+                .unwrap()
+                .matches(&o)
+        );
 
         let o2 = obj(&[("sAMAccountName", vec![s("admin")])]);
-        assert!(LdapFilter::parse("(sAMAccountName=*dmi*)").unwrap().matches(&o2));
+        assert!(
+            LdapFilter::parse("(sAMAccountName=*dmi*)")
+                .unwrap()
+                .matches(&o2)
+        );
     }
 
     #[test]
@@ -647,23 +675,37 @@ mod tests {
 
     #[test]
     fn numeric_equality_on_integer_attr() {
-        let o = obj(&[(
-            "userAccountControl",
-            vec![AttributeValue::Integer(512)],
-        )]);
-        assert!(LdapFilter::parse("(userAccountControl=512)").unwrap().matches(&o));
-        assert!(!LdapFilter::parse("(userAccountControl=513)").unwrap().matches(&o));
+        let o = obj(&[("userAccountControl", vec![AttributeValue::Integer(512)])]);
+        assert!(
+            LdapFilter::parse("(userAccountControl=512)")
+                .unwrap()
+                .matches(&o)
+        );
+        assert!(
+            !LdapFilter::parse("(userAccountControl=513)")
+                .unwrap()
+                .matches(&o)
+        );
     }
 
     #[test]
     fn ge_le_numeric() {
-        let o = obj(&[(
-            "userAccountControl",
-            vec![AttributeValue::Integer(512)],
-        )]);
-        assert!(LdapFilter::parse("(userAccountControl>=512)").unwrap().matches(&o));
-        assert!(LdapFilter::parse("(userAccountControl<=512)").unwrap().matches(&o));
-        assert!(!LdapFilter::parse("(userAccountControl>=513)").unwrap().matches(&o));
+        let o = obj(&[("userAccountControl", vec![AttributeValue::Integer(512)])]);
+        assert!(
+            LdapFilter::parse("(userAccountControl>=512)")
+                .unwrap()
+                .matches(&o)
+        );
+        assert!(
+            LdapFilter::parse("(userAccountControl<=512)")
+                .unwrap()
+                .matches(&o)
+        );
+        assert!(
+            !LdapFilter::parse("(userAccountControl>=513)")
+                .unwrap()
+                .matches(&o)
+        );
     }
 
     #[test]
@@ -676,8 +718,16 @@ mod tests {
     #[test]
     fn not_negates() {
         let o = obj(&[("objectClass", vec![s("user")])]);
-        assert!(LdapFilter::parse("(!(objectClass=computer))").unwrap().matches(&o));
-        assert!(!LdapFilter::parse("(!(objectClass=user))").unwrap().matches(&o));
+        assert!(
+            LdapFilter::parse("(!(objectClass=computer))")
+                .unwrap()
+                .matches(&o)
+        );
+        assert!(
+            !LdapFilter::parse("(!(objectClass=user))")
+                .unwrap()
+                .matches(&o)
+        );
     }
 
     #[test]
@@ -694,23 +744,41 @@ mod tests {
             "objectCategory",
             vec![s("CN=Person,CN=Schema,CN=Configuration,DC=x")],
         )]);
-        assert!(LdapFilter::parse("(objectCategory=Person)").unwrap().matches(&o));
-        assert!(LdapFilter::parse("(objectCategory=person)").unwrap().matches(&o));
-        assert!(!LdapFilter::parse("(objectCategory=Computer)").unwrap().matches(&o));
+        assert!(
+            LdapFilter::parse("(objectCategory=Person)")
+                .unwrap()
+                .matches(&o)
+        );
+        assert!(
+            LdapFilter::parse("(objectCategory=person)")
+                .unwrap()
+                .matches(&o)
+        );
+        assert!(
+            !LdapFilter::parse("(objectCategory=Computer)")
+                .unwrap()
+                .matches(&o)
+        );
     }
 
     #[test]
     fn and_objectcategory_person_and_objectclass_user() {
         // The canonical "find all users" query from the issue.
         let o = obj(&[
-            ("objectCategory", vec![s("CN=Person,CN=Schema,CN=Configuration,DC=x")]),
+            (
+                "objectCategory",
+                vec![s("CN=Person,CN=Schema,CN=Configuration,DC=x")],
+            ),
             ("objectClass", vec![s("user")]),
         ]);
         let f = LdapFilter::parse("(&(objectCategory=Person)(objectClass=User))").unwrap();
         assert!(f.matches(&o));
 
         let computer = obj(&[
-            ("objectCategory", vec![s("CN=Computer,CN=Schema,CN=Configuration,DC=x")]),
+            (
+                "objectCategory",
+                vec![s("CN=Computer,CN=Schema,CN=Configuration,DC=x")],
+            ),
             ("objectClass", vec![s("computer")]),
         ]);
         assert!(!f.matches(&computer));
@@ -720,15 +788,27 @@ mod tests {
     fn objectclass_computer_match() {
         // The "find all computers" query from the issue.
         let o = obj(&[("objectClass", vec![s("top"), s("computer")])]);
-        assert!(LdapFilter::parse("(objectClass=computer)").unwrap().matches(&o));
+        assert!(
+            LdapFilter::parse("(objectClass=computer)")
+                .unwrap()
+                .matches(&o)
+        );
     }
 
     #[test]
     fn samaccountname_prefix_wildcard() {
         // The "users whose sAMAccountName starts with j" query from the issue.
         let o = obj(&[("sAMAccountName", vec![s("jdoe")])]);
-        assert!(LdapFilter::parse("(sAMAccountName=j*)").unwrap().matches(&o));
+        assert!(
+            LdapFilter::parse("(sAMAccountName=j*)")
+                .unwrap()
+                .matches(&o)
+        );
         let o2 = obj(&[("sAMAccountName", vec![s("admin")])]);
-        assert!(!LdapFilter::parse("(sAMAccountName=j*)").unwrap().matches(&o2));
+        assert!(
+            !LdapFilter::parse("(sAMAccountName=j*)")
+                .unwrap()
+                .matches(&o2)
+        );
     }
 }

@@ -10,9 +10,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::error::Result;
+use crate::error::{ParseError, Result};
 use crate::le_reader::LeReader;
-use crate::snapshot::header::{Header, OBJECTS_START};
+use crate::snapshot::header::{Header, OBJECTS_START, WIN_AD_SIG};
 use crate::snapshot::object::Object;
 use crate::snapshot::property::Property;
 
@@ -30,6 +30,32 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Load a snapshot from a file, auto-detecting the format: ADExplorer
+    /// `.dat` binary or LDIF text (saved `ldapsearch` results). This is the
+    /// entry point callers should use by default; `parse_file` is the
+    /// binary-only path.
+    pub fn load_file(path: &Path) -> Result<Self> {
+        let file = std::fs::File::open(path)?;
+        // SAFETY: see parse_file — read-only mapping, data copied out.
+        let mmap = unsafe { memmap2::Mmap::map(&file)? };
+        Self::load_bytes(&mmap)
+    }
+
+    /// Auto-detecting counterpart of [`Snapshot::parse_bytes`]: binary
+    /// snapshots are recognized by their magic signature, anything else is
+    /// attempted as UTF-8 LDIF text.
+    pub fn load_bytes(data: &[u8]) -> Result<Self> {
+        if data.get(..WIN_AD_SIG.len()) == Some(WIN_AD_SIG.as_slice()) {
+            return Self::parse_bytes(data);
+        }
+        let text = std::str::from_utf8(data).map_err(|_| {
+            ParseError::Unrecognized(
+                "not an ADExplorer snapshot and not valid UTF-8 LDIF text".into(),
+            )
+        })?;
+        Self::from_ldif_str(text)
+    }
+
     /// Parse from a `.dat` file. The file is memory-mapped; parsed data is
     /// copied into owned `Vec`s so the returned `Snapshot` does not borrow
     /// the mmap and can be sent across threads freely.
@@ -87,8 +113,6 @@ impl Snapshot {
 
     /// Index of a property by name, if present.
     pub fn property_index_of(&self, name: &str) -> Option<usize> {
-        self.property_index
-            .get(&name.to_ascii_lowercase())
-            .copied()
+        self.property_index.get(&name.to_ascii_lowercase()).copied()
     }
 }

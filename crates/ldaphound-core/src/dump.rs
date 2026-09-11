@@ -12,9 +12,9 @@
 
 use std::io::Write;
 
-use crate::security::descriptor::SecurityDescriptor;
 use crate::security::AceType;
-use crate::{Object, Snapshot, Sid};
+use crate::security::descriptor::SecurityDescriptor;
+use crate::{Object, Sid, Snapshot};
 
 /// Emit one object in `ldapsearch`-style: `dn: ...` then every attribute as
 /// `name: value`, terminated by a blank line. Multi-valued attributes emit
@@ -40,11 +40,7 @@ pub fn dump_object_ldap<W: Write>(obj: &Object, out: &mut W) -> std::io::Result<
 /// trustee SIDs against the snapshot using a linear scan — fine for one-shot
 /// CLI use; callers doing bulk resolution should build a `HashMap<Sid, &Object>`
 /// (as the GUI does).
-pub fn dump_object_acl<W: Write>(
-    snap: &Snapshot,
-    idx: usize,
-    out: &mut W,
-) -> std::io::Result<()> {
+pub fn dump_object_acl<W: Write>(snap: &Snapshot, idx: usize, out: &mut W) -> std::io::Result<()> {
     let obj = &snap.objects[idx];
     writeln!(out, "# object index: {idx}")?;
     dump_object_ldap(obj, out)?;
@@ -60,15 +56,26 @@ pub fn dump_object_acl<W: Write>(
                 writeln!(
                     out,
                     "#   owner           : {}",
-                    sd.owner.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "-".into()),
+                    sd.owner
+                        .as_ref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "-".into()),
                 )?;
                 writeln!(
                     out,
                     "#   group           : {}",
-                    sd.group.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "-".into()),
+                    sd.group
+                        .as_ref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "-".into()),
                 )?;
                 if let Some(dacl) = &sd.dacl {
-                    writeln!(out, "#   DACL: revision={}, {} ACE(s)", dacl.revision, dacl.aces.len())?;
+                    writeln!(
+                        out,
+                        "#   DACL: revision={}, {} ACE(s)",
+                        dacl.revision,
+                        dacl.aces.len()
+                    )?;
                     for (i, ace) in dacl.aces.iter().enumerate() {
                         let kind = match ace.ace_type() {
                             AceType::AccessAllowed => "Allow",
@@ -83,7 +90,11 @@ pub fn dump_object_acl<W: Write>(
                             .mask()
                             .map(|m| format!("{m} [{}]", m.human_names().join(",")))
                             .unwrap_or_else(|| "-".into());
-                        let inherited = if ace.is_inherited() { "inherited" } else { "explicit" };
+                        let inherited = if ace.is_inherited() {
+                            "inherited"
+                        } else {
+                            "explicit"
+                        };
                         writeln!(
                             out,
                             "#     ACE[{i:>2}] {kind:<8} {right:<45} mask={mask} trustee={trustee} [{inherited}]"

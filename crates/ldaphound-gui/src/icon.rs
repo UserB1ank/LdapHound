@@ -21,18 +21,42 @@ fn glyph(codepoint: char) -> Text<'static> {
         .size(ICON_SIZE)
 }
 
-pub fn search() -> Text<'static>       { glyph('\u{F52A}') }
-pub fn folder() -> Text<'static>       { glyph('\u{F3B7}') }
-pub fn person() -> Text<'static>       { glyph('\u{F4D9}') }
-pub fn people() -> Text<'static>       { glyph('\u{F4D0}') }
-pub fn chevron_down() -> Text<'static> { glyph('\u{F282}') }
-pub fn chevron_right() -> Text<'static>{ glyph('\u{F285}') }
-pub fn clipboard() -> Text<'static>    { glyph('\u{F290}') }
-pub fn house() -> Text<'static>        { glyph('\u{F425}') }
-pub fn gear() -> Text<'static>         { glyph('\u{F3E5}') }
-pub fn close() -> Text<'static>        { glyph('\u{F659}') }
-pub fn dots_vertical() -> Text<'static>{ glyph('\u{F5C3}') }
-pub fn refresh() -> Text<'static>      { glyph('\u{F101}') }
+pub fn search() -> Text<'static> {
+    glyph('\u{F52A}')
+}
+pub fn folder() -> Text<'static> {
+    glyph('\u{F3B7}')
+}
+pub fn person() -> Text<'static> {
+    glyph('\u{F4D9}')
+}
+pub fn people() -> Text<'static> {
+    glyph('\u{F4D0}')
+}
+pub fn chevron_down() -> Text<'static> {
+    glyph('\u{F282}')
+}
+pub fn chevron_right() -> Text<'static> {
+    glyph('\u{F285}')
+}
+pub fn clipboard() -> Text<'static> {
+    glyph('\u{F290}')
+}
+pub fn house() -> Text<'static> {
+    glyph('\u{F425}')
+}
+pub fn gear() -> Text<'static> {
+    glyph('\u{F3E5}')
+}
+pub fn close() -> Text<'static> {
+    glyph('\u{F659}')
+}
+pub fn dots_vertical() -> Text<'static> {
+    glyph('\u{F5C3}')
+}
+pub fn refresh() -> Text<'static> {
+    glyph('\u{F101}')
+}
 
 /// Pick an icon for a coarse AD object type.
 pub fn for_object_type(t: ldaphound_core::filter::ObjectType) -> Text<'static> {

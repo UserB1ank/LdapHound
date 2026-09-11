@@ -3,8 +3,8 @@
 **English** | [简体中文](./README.zh-CN.md)
 
 > Deep-dive parser for Active Directory **Security Descriptors** — read
-> ADExplorer `.dat` snapshots offline, no domain controller required.
-> Ships with both a GUI and a CLI.
+> ADExplorer `.dat` snapshots or `ldapsearch` LDIF dumps offline, no live
+> domain connection required. Ships with both a GUI and a CLI.
 
 ![1](docs/1.png)
 
@@ -34,13 +34,138 @@ Beyond SD parsing, LdapHound also reconstructs the directory tree
 UTCTime), and supports RFC 4515 LDAP search filters
 (`(&(objectCategory=Person)(objectClass=User))`, `(sAMAccountName=j*)`).
 
+The same views work on `ldapsearch` query results: save the LDIF output to
+a file and open it — see [Importing `ldapsearch` results](#importing-ldapsearch-results-ldif).
+
+## Importing `ldapsearch` results (LDIF)
+
+LdapHound opens LDIF files written by OpenLDAP's `ldapsearch` (and
+compatible tools) with the same tree, attribute and ACL views. The input
+format is auto-detected, so `.dat` snapshots and LDIF dumps go through the
+same GUI **Open…** dialog or the same CLI invocation.
+
+### Recommended query
+
+```bash
+ldapsearch -o ldif-wrap=no -E pr=1000/noprompt \
+  -x -H ldap://dc01.corp.local -D 'CORP\jdoe' -W \
+  -b 'DC=corp,DC=local' \
+  '(objectClass=*)' '*' nTSecurityDescriptor \
+  > corp.ldif
+```
+
+Why these flags matter:
+
+| Flag | Why |
+| --- | --- |
+| `-E pr=1000/noprompt` | **Required.** AD caps one results page at 1000 entries; paged retrieval is the only way to get everything. |
+| `'*' nTSecurityDescriptor` | `*` fetches all user attributes; `nTSecurityDescriptor` must be requested explicitly or the ACL tab stays empty. |
+| `-o ldif-wrap=no` | Keeps multi-KB security descriptors on one line. Optional — folded lines are accepted too. |
+| `-t` / `-T` | **Don't use.** They write binary attributes to temp files instead of inline base64, which the importer can't read. |
+
+Binary attributes (`objectSid`, `objectGUID`, `nTSecurityDescriptor`, ...)
+arrive base64-encoded (`objectSid:: AQAA...`) and are decoded automatically.
+If security descriptors come back empty, the bind account lacks
+`READ_CONTROL` on those objects.
+
+For large domains, requesting only the attributes LdapHound actually uses
+is much faster on the wire:
+
+```bash
+ldapsearch -o ldif-wrap=no -E pr=1000/noprompt \
+  -x -H ldap://dc01.corp.local -D 'CORP\jdoe' -W \
+  -b 'DC=corp,DC=local' \
+  '(objectClass=*)' \
+  objectClass cn name sAMAccountName member memberOf objectSid objectGUID nTSecurityDescriptor \
+  > corp.ldif
+```
+
+That attribute set covers the tree layout (`objectClass` + the always-present
+`dn:`), trustee resolution (`objectSid` + `sAMAccountName`/`name`) and the
+ACL tab (`nTSecurityDescriptor`); `member`/`memberOf` are optional extras.
+
+Smaller scopes work identically — restrict with `-b` or an LDAP filter:
+
+```bash
+# Only user and computer objects
+... -b 'DC=corp,DC=local' '(|(objectCategory=Person)(objectCategory=Computer))' ...
+# Only one OU
+... -b 'OU=Sales,DC=corp,DC=local' '(objectClass=*)' ...
+```
+
+The Configuration and Schema naming contexts can be dumped separately and
+concatenated into the same file — LDIF records are self-describing:
+
+```bash
+ldapsearch ... -b 'CN=Configuration,DC=corp,DC=local' '(objectClass=*)' '*' nTSecurityDescriptor >> corp.ldif
+```
+
+Kerberos (`-Y GSSAPI` instead of `-x -D ... -W`) and LDAPS
+(`ldaps://dc01.corp.local` or `-ZZ`) work as usual.
+
+Then inspect it like any snapshot:
+
+```bash
+ldaphound-cli corp.ldif --type user
+ldaphound-cli corp.ldif --object "CN=Administrator,CN=Users,DC=corp,DC=local"
+```
+
+## AI relationship-graph analysis
+
+LdapHound can expose a bounded, read-only graph to an OpenAI model through
+the Responses API's [function calling](https://developers.openai.com/api/docs/guides/function-calling)
+flow. The model can search nodes, inspect a node, traverse neighbors, find
+paths, and list high-risk relationships without receiving the raw snapshot.
+
+The graph currently models:
+
+- directory containment and group membership (including `primaryGroupID`)
+- `manager` / `managedBy`, object ownership, GPO links and SID History
+- allow/deny ACL relationships with right, mask and inheritance metadata
+- resource-based constrained delegation and constrained-delegation SPNs
+
+Set the API key only in the process environment:
+
+```bash
+export OPENAI_API_KEY='...'
+# Optional; defaults to gpt-5.6
+export OPENAI_MODEL='gpt-5.6'
+
+ldaphound-cli snapshot.dat --ai "Find high-impact paths to privileged groups"
+ldaphound-cli snapshot.dat --ai "Analyze this account" --ai-focus 'CORP\\jdoe'
+```
+
+The GUI exposes the same workflow in the selected object's **AI Analysis**
+tab. No provider request is made until **Analyze graph** is clicked.
+
+### Privacy boundary
+
+- Requests use `store: false`; the API key is never stored in application
+  state, files, graph exports, prompts, or logs.
+- Raw `.dat`/LDIF files, raw security descriptors, binary values, and
+  arbitrary LDAP attributes are never uploaded. Tools return only bounded
+  identity, security-posture and relationship fields.
+- LDAP values are treated as untrusted data so text inside an attribute
+  cannot become model instructions.
+- You can inspect exactly what the AI tools are able to expose before making
+  a request:
+
+```bash
+ldaphound-cli snapshot.dat --export-ai-graph ai-graph.json
+```
+
+Names, DNs, SIDs, selected security attributes and graph relationships are
+still directory data and will be transmitted when the model requests them.
+Use an approved API project and data-handling policy for your environment.
+
 ## Usage — GUI
 
 ```bash
 cargo run --release -p ldaphound-gui
 ```
 
-- Top menu bar: **Open .dat**
+- Top menu bar: **Open…** — ADExplorer `.dat` snapshot or LDAP/LDIF dump
+  (format auto-detected)
 - Left sidebar: recursive tree over the three naming contexts, with
   expand/collapse, substring filter, per-type icons
 - Main pane: object TitleBar (icon + name + class + DN), then two tabs
@@ -54,8 +179,13 @@ cargo run --release -p ldaphound-gui
 ## Usage — CLI
 
 ```bash
-# List every object (ldapsearch-style output)
+# List every object (ldapsearch-style output); input may be an ADExplorer
+# .dat snapshot or an ldapsearch LDIF dump (auto-detected)
 ldaphound-cli snapshot.dat
+ldaphound-cli corp.ldif
+
+# AI analysis through a privacy-bounded relationship graph
+ldaphound-cli snapshot.dat --ai "Find dangerous delegated permissions"
 
 # Inspect one object's full Security Descriptor + ACL breakdown
 ldaphound-cli snapshot.dat --object "CN=Administrator,CN=Users,DC=x"

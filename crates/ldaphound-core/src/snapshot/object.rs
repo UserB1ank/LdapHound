@@ -114,12 +114,15 @@ impl Object {
     /// True if the object has the given class anywhere in its objectClass
     /// hierarchy (case-insensitive).
     pub fn has_class(&self, class: &str) -> bool {
-        self.object_classes().iter().any(|c| c.eq_ignore_ascii_case(class))
+        self.object_classes()
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(class))
     }
 
     /// `distinguishedName` (e.g. `CN=Administrator,CN=Users,DC=...`).
     pub fn dn(&self) -> Option<&str> {
-        self.get_first("distinguishedName").and_then(AttributeValue::as_str)
+        self.get_first("distinguishedName")
+            .and_then(AttributeValue::as_str)
     }
 
     /// `objectSid` parsed as a [`Sid`]. None if absent or malformed.
@@ -167,12 +170,18 @@ impl Object {
     /// rendering so users see a recognizable name instead of just a SID or
     /// DN component.
     pub fn principal_name(&self) -> String {
-        if let Some(s) = self.get_first("sAMAccountName").and_then(AttributeValue::as_str) {
+        if let Some(s) = self
+            .get_first("sAMAccountName")
+            .and_then(AttributeValue::as_str)
+        {
             if !s.is_empty() {
                 return s.to_string();
             }
         }
-        if let Some(s) = self.get_first("userPrincipalName").and_then(AttributeValue::as_str) {
+        if let Some(s) = self
+            .get_first("userPrincipalName")
+            .and_then(AttributeValue::as_str)
+        {
             if !s.is_empty() {
                 return s.to_string();
             }

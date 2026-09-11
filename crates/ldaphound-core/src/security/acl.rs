@@ -30,10 +30,7 @@ impl Acl {
         if acl_size < 8 || bytes.len() < acl_size {
             return Err(ParseError::Malformed {
                 what: "ACL",
-                detail: format!(
-                    "declared size {acl_size} invalid for input {}",
-                    bytes.len()
-                ),
+                detail: format!("declared size {acl_size} invalid for input {}", bytes.len()),
                 offset: 0,
             });
         }

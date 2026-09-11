@@ -16,6 +16,10 @@ pub enum ParseError {
     #[error("not an ADExplorer snapshot: bad signature {signature:?}")]
     BadSignature { signature: [u8; 10] },
 
+    /// Neither a `.dat` snapshot nor LDIF text (auto-detection failed).
+    #[error("unrecognized input: {0}")]
+    Unrecognized(String),
+
     /// Read past end of file / mapped buffer.
     #[error("unexpected end of data at offset 0x{offset:x}: need {needed} more bytes")]
     UnexpectedEof { offset: u64, needed: usize },
