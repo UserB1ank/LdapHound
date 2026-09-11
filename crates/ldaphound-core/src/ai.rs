@@ -45,15 +45,43 @@ pub struct AiConfig {
 
 impl AiConfig {
     pub fn from_env() -> Result<Self, AiError> {
-        let api_key = std::env::var("OPENAI_API_KEY")
-            .map_err(|_| AiError::Config("OPENAI_API_KEY is not set".into()))?;
-        if api_key.trim().is_empty() {
-            return Err(AiError::Config("OPENAI_API_KEY is empty".into()));
+        Self::from_settings(
+            None,
+            std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.into()),
+            std::env::var("OPENAI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.into()),
+        )
+    }
+
+    /// Build configuration from user-visible runtime settings. A missing or
+    /// blank key falls back to `OPENAI_API_KEY`; the key is never persisted.
+    pub fn from_settings(
+        api_key: Option<String>,
+        base_url: String,
+        model: String,
+    ) -> Result<Self, AiError> {
+        let api_key = match api_key.filter(|value| !value.trim().is_empty()) {
+            Some(value) => value,
+            None => std::env::var("OPENAI_API_KEY")
+                .map_err(|_| AiError::Config("API key is not configured".into()))?,
+        }
+        .trim()
+        .to_string();
+        if api_key.is_empty() {
+            return Err(AiError::Config("API key is empty".into()));
+        }
+        let base_url = base_url.trim().trim_end_matches('/').to_string();
+        if base_url.is_empty() {
+            return Err(AiError::Config("API base URL is empty".into()));
+        }
+        validate_base_url(&base_url)?;
+        let model = model.trim().to_string();
+        if model.is_empty() {
+            return Err(AiError::Config("model ID is empty".into()));
         }
         Ok(Self {
             api_key,
-            base_url: std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.into()),
-            model: std::env::var("OPENAI_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.into()),
+            base_url,
+            model,
             max_tool_rounds: DEFAULT_TOOL_ROUNDS,
         })
     }
@@ -481,6 +509,19 @@ fn truncate_error(value: &str) -> String {
 fn validate_base_url(value: &str) -> Result<(), AiError> {
     let url = reqwest::Url::parse(value)
         .map_err(|error| AiError::Config(format!("invalid OPENAI_BASE_URL: {error}")))?;
+    if url.host_str().is_none() {
+        return Err(AiError::Config("API base URL has no host name".into()));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(AiError::Config(
+            "API base URL must not contain embedded credentials".into(),
+        ));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(AiError::Config(
+            "API base URL must not contain a query string or fragment".into(),
+        ));
+    }
     if url.scheme() == "https" {
         return Ok(());
     }
@@ -570,5 +611,20 @@ mod tests {
         assert!(validate_base_url("http://127.0.0.1:11434/v1").is_ok());
         assert!(validate_base_url("http://localhost:8080/v1").is_ok());
         assert!(validate_base_url("http://api.example.test/v1").is_err());
+        assert!(validate_base_url("https://user:secret@api.example.test/v1").is_err());
+        assert!(validate_base_url("https://api.example.test/v1?token=secret").is_err());
+        assert!(validate_base_url("file:///v1").is_err());
+    }
+
+    #[test]
+    fn accepts_explicit_runtime_settings() {
+        let config = AiConfig::from_settings(
+            Some("test-key-not-a-credential".into()),
+            " https://api.openai.com/v1/ ".into(),
+            " gpt-test ".into(),
+        )
+        .unwrap();
+        assert_eq!(config.base_url, "https://api.openai.com/v1");
+        assert_eq!(config.model, "gpt-test");
     }
 }

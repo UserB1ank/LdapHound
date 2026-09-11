@@ -118,7 +118,7 @@ LdapHound 可以通过 OpenAI Responses API 的
 - 带权限名、掩码和继承信息的允许/拒绝 ACL 关系
 - 基于资源的约束委派（RBCD）与约束委派 SPN
 
-API 密钥只通过进程环境变量提供：
+CLI 从进程环境变量读取 API 密钥：
 
 ```bash
 export OPENAI_API_KEY='...'
@@ -129,13 +129,15 @@ ldaphound-cli snapshot.dat --ai "查找通向高权限组的高风险路径"
 ldaphound-cli snapshot.dat --ai "分析这个账号" --ai-focus 'CORP\\jdoe'
 ```
 
-GUI 在所选对象的 **AI Analysis** 标签页提供相同功能。只有点击
-**Analyze graph** 后才会访问模型服务。
+GUI 在所选对象的 **AI Analysis** 标签页提供相同功能。顶部工具栏的
+**AI settings** 可以配置 Responses API 地址、模型 ID 和掩码显示的 API
+密钥。GUI 密钥留空时使用 `OPENAI_API_KEY`；手工输入的密钥只保留在当前
+进程内存中，不会写入磁盘。只有点击 **Analyze graph** 后才会访问模型服务。
 
 ### 隐私边界
 
-- API 请求设置 `store: false`；密钥不会进入应用状态、文件、图谱导出、
-  提示词或日志。
+- API 请求设置 `store: false`；密钥不会写入文件、图谱导出、提示词或日志。
+  GUI 输入的密钥仅以掩码形式存在于当前会话的进程内存中。
 - 不上传原始 `.dat`/LDIF、原始安全描述符、二进制值或任意 LDAP 属性；
   工具仅返回长度受限的身份、安全状态和关系字段。
 - LDAP 值全部视为不可信数据，属性中的文本不会被当作模型指令执行。

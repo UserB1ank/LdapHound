@@ -18,7 +18,7 @@ use iced::{Element, Length};
 
 use ldaphound_core::{LdapGraph, Snapshot, Tree};
 
-use crate::message::Message;
+use crate::message::{Message, SecretInput};
 use crate::task;
 use crate::view::{object_view, sidebar};
 
@@ -66,6 +66,9 @@ pub struct App {
 
     status: String,
     parsing: bool,
+    ai_settings_open: bool,
+    ai_api_key: SecretInput,
+    ai_base_url: String,
     ai_question: String,
     ai_model: String,
     ai_answer: String,
@@ -96,6 +99,10 @@ pub fn new() -> App {
         attr_cache: crate::view::object_view::AttrCache::default(),
         status: "Open a .dat snapshot or an ldapsearch LDIF dump to begin.".into(),
         parsing: false,
+        ai_settings_open: false,
+        ai_api_key: SecretInput::default(),
+        ai_base_url: std::env::var("OPENAI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.openai.com/v1".into()),
         ai_question: "Find high-impact privilege paths and misconfigurations.".into(),
         ai_model: std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-5.6".into()),
         ai_answer: String::new(),
@@ -263,6 +270,18 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             app.selected_ace = None;
             Task::none()
         }
+        Message::AiSettingsToggled => {
+            app.ai_settings_open = !app.ai_settings_open;
+            Task::none()
+        }
+        Message::AiApiKeyChanged(api_key) => {
+            app.ai_api_key = api_key;
+            Task::none()
+        }
+        Message::AiBaseUrlChanged(base_url) => {
+            app.ai_base_url = base_url;
+            Task::none()
+        }
         Message::AiQuestionChanged(question) => {
             app.ai_question = question;
             Task::none()
@@ -285,6 +304,8 @@ pub fn update(app: &mut App, message: Message) -> Task<Message> {
             task::analyze_graph(
                 Arc::clone(graph),
                 app.ai_question.trim().to_string(),
+                app.ai_api_key.expose().to_string(),
+                app.ai_base_url.trim().to_string(),
                 app.ai_model.trim().to_string(),
                 app.selected,
             )
@@ -321,9 +342,27 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .padding([4, 10])
     .style(|t, s| crate::theme::primary(t, s));
 
+    let ai_settings_btn = button(
+        row![
+            crate::icon::gear(),
+            iced::widget::text(if app.ai_settings_open {
+                "Hide AI settings"
+            } else {
+                "AI settings"
+            })
+            .size(13),
+        ]
+        .spacing(6)
+        .align_y(iced::alignment::Vertical::Center),
+    )
+    .on_press(Message::AiSettingsToggled)
+    .padding([4, 10])
+    .style(|t, s| crate::theme::secondary(t, s));
+
     let menu_bar = container(
         row![
             open_btn,
+            ai_settings_btn,
             iced::widget::text(app.status.clone())
                 .size(12)
                 .color(crate::theme::dim_text()),
@@ -396,7 +435,12 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .into(),
     };
 
-    let content = iced::widget::column![menu_bar, body]
+    let mut content = iced::widget::column![menu_bar];
+    if app.ai_settings_open {
+        content = content.push(ai_settings_panel(app));
+    }
+    let content = content
+        .push(body)
         .width(Length::Fill)
         .height(Length::Fill)
         .spacing(0);
@@ -405,6 +449,55 @@ pub fn view(app: &App) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn ai_settings_panel(app: &App) -> Element<'_, Message> {
+    use iced::widget::{Space, text_input};
+
+    let base_url = text_input("https://api.openai.com/v1", &app.ai_base_url)
+        .on_input(Message::AiBaseUrlChanged)
+        .width(Length::Fill);
+    let model = text_input("Model ID", &app.ai_model)
+        .on_input(Message::AiModelChanged)
+        .width(Length::Fill);
+    let api_key = text_input("Blank uses OPENAI_API_KEY", app.ai_api_key.expose())
+        .on_input(|value| Message::AiApiKeyChanged(SecretInput::new(value)))
+        .secure(true)
+        .width(Length::Fill);
+    let key_source = if app.ai_api_key.expose().is_empty() {
+        "API key is blank: OPENAI_API_KEY will be used when you analyze"
+    } else {
+        "API key source: masked session value (never saved to disk)"
+    };
+
+    container(
+        column![
+            row![
+                text("AI model configuration").size(15),
+                Space::new().width(Length::Fill),
+                button(text("Done").size(12))
+                    .on_press(Message::AiSettingsToggled)
+                    .padding([3, 8])
+                    .style(|theme, status| crate::theme::secondary(theme, status)),
+            ]
+            .align_y(iced::alignment::Vertical::Center),
+            text("OpenAI Responses API-compatible connection. Settings apply to the next analysis request.")
+                .size(12)
+                .color(crate::theme::dim_text()),
+            column![text("API base URL").size(12), base_url].spacing(3),
+            column![text("Model ID").size(12), model].spacing(3),
+            column![text("API key").size(12), api_key].spacing(3),
+            text(key_source).size(12).color(crate::theme::dim_text()),
+            text("Security: the key stays in process memory, remote endpoints require HTTPS, redirects are disabled, and requests use store=false. The key is sent to the configured endpoint—verify it before analyzing.")
+                .size(12)
+                .color(crate::theme::dim_text()),
+        ]
+        .spacing(7),
+    )
+    .padding([8, 12])
+    .width(Length::Fill)
+    .style(|theme| crate::theme::pane_body(theme))
+    .into()
 }
 
 /// Render the Main pane: a title bar with the object's display name + class,

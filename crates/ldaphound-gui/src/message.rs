@@ -3,6 +3,7 @@
 //! iced requires `Message: Clone + Send`. `ParseError` is not `Clone`, so
 //! parse failures are stringified at the task boundary.
 
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -13,6 +14,27 @@ use ldaphound_core::{LdapGraph, Sid, Snapshot};
 pub struct LoadedDirectory {
     pub snapshot: Arc<Snapshot>,
     pub graph: Arc<LdapGraph>,
+}
+
+/// Secret text carried by iced messages. Its `Debug` representation is
+/// always redacted so an API key cannot leak through event diagnostics.
+#[derive(Clone, Default)]
+pub struct SecretInput(String);
+
+impl SecretInput {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for SecretInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SecretInput(<redacted>)")
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -50,8 +72,24 @@ pub enum Message {
     ToggleAclRightFilter(String),
 
     /// AI analyst controls. Network access occurs only on AnalyzeClicked.
+    AiSettingsToggled,
+    AiApiKeyChanged(SecretInput),
+    AiBaseUrlChanged(String),
     AiQuestionChanged(String),
     AiModelChanged(String),
     AiAnalyzeClicked,
     AiAnalysisCompleted(Result<String, String>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Message, SecretInput};
+
+    #[test]
+    fn api_key_is_redacted_from_message_debug_output() {
+        let message = Message::AiApiKeyChanged(SecretInput::new("not-a-real-secret".into()));
+        let debug = format!("{message:?}");
+        assert!(!debug.contains("not-a-real-secret"));
+        assert!(debug.contains("<redacted>"));
+    }
 }

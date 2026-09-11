@@ -43,18 +43,25 @@ pub fn parse_snapshot(path: PathBuf) -> Task<Message> {
 }
 
 /// Run the blocking HTTPS + function-calling loop away from iced's async
-/// reactor. The API key is read inside the worker and never enters App state.
+/// reactor. A blank UI key falls back to `OPENAI_API_KEY`; an entered key is
+/// held only in process memory and moved directly into the request client.
 pub fn analyze_graph(
     graph: Arc<LdapGraph>,
     question: String,
+    api_key: String,
+    base_url: String,
     model: String,
     focus_node: Option<usize>,
 ) -> Task<Message> {
     Task::perform(
         async move {
             match tokio::task::spawn_blocking(move || {
-                let mut config = AiConfig::from_env().map_err(|error| error.to_string())?;
-                config.set_model(model);
+                let config = AiConfig::from_settings(
+                    (!api_key.trim().is_empty()).then_some(api_key),
+                    base_url,
+                    model,
+                )
+                .map_err(|error| error.to_string())?;
                 let analyzer = AiAnalyzer::new(config).map_err(|error| error.to_string())?;
                 analyzer
                     .analyze(&graph, &question, focus_node)

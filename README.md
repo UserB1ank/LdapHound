@@ -124,7 +124,7 @@ The graph currently models:
 - allow/deny ACL relationships with right, mask and inheritance metadata
 - resource-based constrained delegation and constrained-delegation SPNs
 
-Set the API key only in the process environment:
+The CLI reads its API key from the process environment:
 
 ```bash
 export OPENAI_API_KEY='...'
@@ -136,12 +136,17 @@ ldaphound-cli snapshot.dat --ai "Analyze this account" --ai-focus 'CORP\\jdoe'
 ```
 
 The GUI exposes the same workflow in the selected object's **AI Analysis**
-tab. No provider request is made until **Analyze graph** is clicked.
+tab. Use **AI settings** in the top toolbar to configure the Responses API
+base URL, model ID, and a masked API key. A blank GUI key uses
+`OPENAI_API_KEY`; an entered key is held only for the current process and is
+never written to disk. No provider request is made until **Analyze graph** is
+clicked.
 
 ### Privacy boundary
 
-- Requests use `store: false`; the API key is never stored in application
-  state, files, graph exports, prompts, or logs.
+- Requests use `store: false`; the API key is never written to files, graph
+  exports, prompts, or logs. A GUI-entered key exists only in masked process
+  memory for the current session.
 - Raw `.dat`/LDIF files, raw security descriptors, binary values, and
   arbitrary LDAP attributes are never uploaded. Tools return only bounded
   identity, security-posture and relationship fields.

@@ -88,9 +88,6 @@ fn view_ai<'a>(
     use iced::widget::text_input;
 
     let summary = graph.summary();
-    let model_input = text_input("OpenAI model", model)
-        .on_input(Message::AiModelChanged)
-        .width(Length::FillPortion(2));
     let question_input = text_input("Ask about privilege paths, ACLs, or delegation…", question)
         .on_input(Message::AiQuestionChanged)
         .width(Length::Fill);
@@ -114,12 +111,19 @@ fn view_ai<'a>(
         .color(crate::theme::dim_text())
         .into(),
         text(
-            "Privacy: arbitrary attributes, credential fields, and raw security descriptors are omitted. No request is made until you click Analyze; requests use store=false. Configure OPENAI_API_KEY in the process environment.",
+            "Privacy: arbitrary attributes, credential fields, and raw security descriptors are omitted. No request is made until you click Analyze; requests use store=false.",
         )
         .size(12)
         .color(crate::theme::dim_text())
         .into(),
-        row![text("Model:"), model_input]
+        row![
+            text(format!("Model: {model}")),
+            iced::widget::Space::new().width(Length::Fill),
+            button(text("Configure model").size(12))
+                .on_press(Message::AiSettingsToggled)
+                .padding([4, 8])
+                .style(|theme, status| crate::theme::secondary(theme, status)),
+        ]
             .spacing(8)
             .align_y(iced::alignment::Vertical::Center)
             .into(),
